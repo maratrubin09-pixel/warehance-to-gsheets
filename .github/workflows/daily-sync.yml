@@ -3,7 +3,7 @@ name: Daily Warehance Sync
 on:
   schedule:
     - cron: '1 5 * * *'  # 00:01 EST (05:01 UTC)
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:
 
 jobs:
   sync:
@@ -21,7 +21,9 @@ jobs:
         run: pip install gspread google-auth google-api-python-client requests python-dotenv
 
       - name: Write service account key
-        run: echo '${{ secrets.GOOGLE_SA_KEY }}' > config/service_account.json
+        run: |
+          mkdir -p config
+          echo '${{ secrets.GOOGLE_SA_KEY }}' > config/service_account.json
 
       - name: Run sync
         env:
