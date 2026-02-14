@@ -1,0 +1,7 @@
+gspread>=5.12
+google-auth>=2.23
+google-api-python-client>=2.100
+python-dotenv>=1.0
+requests>=2.31
+tenacity>=8.2
+schedule>=1.2

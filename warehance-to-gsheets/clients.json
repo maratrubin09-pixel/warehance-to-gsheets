@@ -1,0 +1,18 @@
+{
+  "clients": [
+    {
+      "warehance_client_id": "001",
+      "name": "Sarmali Inc",
+      "spreadsheet_id": "ВСТАВЬТЕ_ID_ТАБЛИЦЫ_СЮДА",
+      "fbm_tab": "FBM",
+      "payments_tab": "Payments"
+    },
+    {
+      "warehance_client_id": "279",
+      "name": "Amzammia",
+      "spreadsheet_id": "ВСТАВЬТЕ_ID_ТАБЛИЦЫ_СЮДА",
+      "fbm_tab": "FBM",
+      "payments_tab": "Payments"
+    }
+  ]
+}

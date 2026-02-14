@@ -1,0 +1,47 @@
+# Запуск синхронизации Warehance → Google Sheets по расписанию
+name: Daily Warehance Sync
+
+on:
+  schedule:
+    # Каждый день в 06:00 UTC (09:00 MSK)
+    - cron: "0 6 * * *"
+  workflow_dispatch: # Ручной запуск из интерфейса GitHub
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create service account file
+        run: echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > config/service_account.json
+
+      - name: Run sync
+        env:
+          WAREHANCE_API_KEY: ${{ secrets.WAREHANCE_API_KEY }}
+          GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
+          GOOGLE_SERVICE_ACCOUNT_FILE: config/service_account.json
+          GOOGLE_WORKSHEET_NAME: "FBM"
+          SYNC_DAYS_BACK: "1"
+          SYNC_MODE: "append"
+        run: python agent.py
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-logs
+          path: logs/
+          retention-days: 7

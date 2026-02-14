@@ -1,0 +1,31 @@
+name: Daily Warehance Sync
+
+on:
+  schedule:
+    - cron: '1 5 * * *'  # 00:01 EST (05:01 UTC)
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install gspread google-auth google-api-python-client requests python-dotenv
+
+      - name: Write service account key
+        run: echo '${{ secrets.GOOGLE_SA_KEY }}' > config/service_account.json
+
+      - name: Run sync
+        env:
+          WAREHANCE_API_KEY: ${{ secrets.WAREHANCE_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 agent.py --days 1

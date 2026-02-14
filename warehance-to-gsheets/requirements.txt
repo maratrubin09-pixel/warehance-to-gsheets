@@ -1,0 +1,6 @@
+requests>=2.31.0
+gspread>=6.0.0
+google-auth>=2.25.0
+python-dotenv>=1.0.0
+schedule>=1.2.0
+tenacity>=8.2.0

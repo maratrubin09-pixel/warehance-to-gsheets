@@ -1,0 +1,148 @@
+{
+  "clients": [
+    {
+      "warehance_id": 231185181558,
+      "number": "001",
+      "name": "Sarmali Inc",
+      "spreadsheet_id": "12nTN5RCgzAQeF6HFnw8iqyN8IKOt3O3hovFy9jS0M9M",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": false,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185182410
+    },
+    {
+      "warehance_id": 231185181635,
+      "number": "111",
+      "name": "Steric Resources LLC",
+      "spreadsheet_id": "1YU3j4KEaS2oSDhATQVMd4opHOx2k8iXO06flA7NDfjY",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": true,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185181454
+    },
+    {
+      "warehance_id": 231185181596,
+      "number": "122",
+      "name": "122",
+      "spreadsheet_id": "1KBGF69dOY5ndTj91cpLy01c1o6c7F3g5PIYDI3yIaps",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": true,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185181454
+    },
+    {
+      "warehance_id": 231185181591,
+      "number": "134",
+      "name": "134",
+      "spreadsheet_id": "11ahV74cfUhzvrK_10YWYniBMIiOHQB0XiUqLjG9AAfI",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": true,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185181454
+    },
+    {
+      "warehance_id": 231185181634,
+      "number": "154",
+      "name": "Liza Herman",
+      "spreadsheet_id": "1EodIslULTelBVhuHFepbkMn3_BtwPWFuKhUg6IKn6TQ",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": true,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185181547
+    },
+    {
+      "warehance_id": 231185181609,
+      "number": "180",
+      "name": "Mr.Lucky",
+      "spreadsheet_id": "1uiTsp6NeiNlXugcJyoMK2QJOO5Oc6rmluAHzNn5u0cQ",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": true,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185181454
+    },
+    {
+      "warehance_id": 231185181597,
+      "number": "257",
+      "name": "SOLMAR",
+      "spreadsheet_id": "1O_A9Kd7vwMib2LTzzeBqr79lE9s2aRHaas9OJqM-5sg",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": true,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185181454
+    },
+    {
+      "warehance_id": 231185181633,
+      "number": "279",
+      "name": "Amzammia",
+      "spreadsheet_id": "1pwSNcF_GlNYGMFt-Ig6pZTVDet5xUZzumypzpnoTui4",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": true,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185181454
+    },
+    {
+      "warehance_id": 231185181714,
+      "number": "281",
+      "name": "Gadget Life LLC",
+      "spreadsheet_id": "1IiZQIBhlFocaiytVHgKKo1IdIZa6zwGdASxCBC5pyYY",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": true,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185181454
+    },
+    {
+      "warehance_id": 231185181780,
+      "number": "284",
+      "name": "LS Synergy Commerce LLC",
+      "spreadsheet_id": "1ye6dwTPCd6iWlw9UNI8re3jMbyBVWVbi3O83a_N7kzM",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": true,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185181454
+    },
+    {
+      "warehance_id": 231185182583,
+      "number": "289",
+      "name": "Carbon Kingdom Inc",
+      "spreadsheet_id": "1fyZxhesbL4isV8m3nIi4iru6Z7WDsfMagGgC53Axohg",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": true,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185181454
+    },
+    {
+      "warehance_id": 231185184929,
+      "number": "294",
+      "name": "Auramel Corp",
+      "spreadsheet_id": "1RoGkuPwnx1l4oHH0TuEd8TXff2H9gOofmGHXDbd9KVU",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": true,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185181454
+    },
+    {
+      "warehance_id": 231185184930,
+      "number": "295",
+      "name": "Brillia Beauty Corp",
+      "spreadsheet_id": "12ZXXU9WujtFmOHyPjYCVPWGQ3DHNYyy4V5hkmglbAeA",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": true,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185181454
+    }
+  ],
+  "dashboard_spreadsheet_id": "1BLQsw4jQAlAlZl1uQ1dETORy7oSCcBW_NeNQkqozLVw"
+}
