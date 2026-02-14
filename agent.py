@@ -66,8 +66,9 @@ def load_clients(filepath: str = "clients.json") -> list[dict]:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     clients = data.get("clients", [])
+    dashboard_id = data.get("dashboard_spreadsheet_id", "")
     logging.getLogger("config").info(f"Loaded {len(clients)} clients")
-    return clients
+    return clients, dashboard_id
 
 
 def validate(config: dict, clients: list[dict], use_csv: bool = False) -> list[str]:
@@ -383,7 +384,8 @@ def main():
     logger = logging.getLogger("main")
 
     try:
-        clients = load_clients()
+        clients, dashboard_id = load_clients()
+        config["dashboard_spreadsheet_id"] = dashboard_id
     except FileNotFoundError as e:
         logger.error(str(e))
         sys.exit(1)
