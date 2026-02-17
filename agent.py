@@ -34,6 +34,7 @@ from dotenv import load_dotenv
 from warehance_client import WarehanceClient
 from sheets_writer import GoogleSheetsWriter
 from transformer import transform_bill_details, parse_csv_file
+from write_pnl import write_pnl_row
 from telegram_notifier import TelegramNotifier
 from gdrive_backup import GDriveBackup
 
@@ -235,6 +236,22 @@ def sync_client(
         date=payments["date"],
         paid_amount=payments["paid"],
     )
+
+    # 7. Write P&L Data
+    try:
+
+        yesterday = datetime.now() - timedelta(days=config["days_back"])
+        pnl_date = yesterday.strftime("%m/%d/%Y")
+        write_pnl_row(
+            service_account_file=config["google_sa_file"],
+            client_number=client_number,
+            client_name=client_name,
+            date_str=pnl_date,
+            transform_result=result,
+        )
+        logger.info(f"P&L row written for {client_name}")
+    except Exception as e:
+        logger.warning(f"P&L write failed for {client_name}: {e}")
 
     return {
         "client": client_name,
