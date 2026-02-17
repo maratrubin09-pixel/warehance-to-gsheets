@@ -1,10 +1,12 @@
 """
-Warehance API Client — fetches bills and downloads CSV details.
+Warehance API Client — fetches bills, downloads CSV details, and shipments.
 """
 
 import csv
 import io
+import json
 import logging
+from pathlib import Path
 
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -12,6 +14,13 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.warehance.com/v1"
+
+# Load packaging costs lookup
+_pkg_costs_path = Path(__file__).parent / "packaging_costs.json"
+PACKAGING_COSTS = {}
+if _pkg_costs_path.exists():
+    with open(_pkg_costs_path) as f:
+        PACKAGING_COSTS = json.load(f)
 
 
 class WarehanceClient:
@@ -23,6 +32,7 @@ class WarehanceClient:
             "X-API-Key": self.api_key,
             "Accept": "application/json",
         })
+        self._shipments_cache: dict[int, dict] = {}
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     def _get(self, path: str, params: dict = None) -> dict:
@@ -82,3 +92,82 @@ class WarehanceClient:
 
         logger.warning(f"No CSV in {len(bills)} bills for client {client_id}")
         return []
+
+    def get_shipments_map(self, client_id: int) -> dict:
+        """
+        Fetch all shipments for a client and return a lookup map:
+        { order_number: { "shipment_cost": float, "boxes": [str, ...] } }
+
+        Uses cursor-based pagination. Results are cached per client_id.
+        """
+        if client_id in self._shipments_cache:
+            return self._shipments_cache[client_id]
+
+        shipments_map: dict[str, dict] = {}
+        cursor = None
+        page = 0
+
+        while True:
+            params = {"limit": 100, "client_id": client_id}
+            if cursor:
+                params["cursor"] = cursor
+
+            try:
+                resp = self._get("/shipments", params=params)
+            except Exception as e:
+                logger.error(f"Shipments fetch failed (page {page}): {e}")
+                break
+
+            data = resp.get("data", {})
+            shipments = data.get("shipments") or []
+
+            for s in shipments:
+                if s.get("voided"):
+                    continue
+                order_num = s.get("order", {}).get("order_number", "")
+                if not order_num:
+                    continue
+
+                cost = float(s.get("shipment_cost", 0) or 0)
+                boxes = []
+                for parcel in s.get("shipment_parcels", []):
+                    box = parcel.get("box", "")
+                    if box:
+                        boxes.append(box)
+
+                if order_num in shipments_map:
+                    shipments_map[order_num]["shipment_cost"] += cost
+                    shipments_map[order_num]["boxes"].extend(boxes)
+                else:
+                    shipments_map[order_num] = {
+                        "shipment_cost": cost,
+                        "boxes": boxes,
+                    }
+
+            page += 1
+
+            if not data.get("has_next_page"):
+                break
+            cursor = data.get("next_cursor", "")
+            if not cursor:
+                break
+
+        logger.info(f"Shipments map for client {client_id}: {len(shipments_map)} orders across {page} pages")
+        self._shipments_cache[client_id] = shipments_map
+        return shipments_map
+
+    @staticmethod
+    def calc_packaging_cost(boxes: list[str]) -> float:
+        """Calculate total packaging material cost from box types."""
+        total = 0.0
+        for box in boxes:
+            cost = PACKAGING_COSTS.get(box, 0)
+            if cost == 0 and box:
+                # Try fuzzy match: strip extra spaces, normalize
+                normalized = box.strip()
+                for key, val in PACKAGING_COSTS.items():
+                    if key.lower() == normalized.lower():
+                        cost = val
+                        break
+            total += cost
+        return round(total, 4)

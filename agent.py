@@ -237,9 +237,26 @@ def sync_client(
         paid_amount=payments["paid"],
     )
 
-    # 7. Write P&L Data
-    try:
+    # 7. Fetch shipment costs from API
+    total_shipping_cost = 0.0
+    total_packaging_cost = 0.0
+    if wh and not csv_path:
+        try:
+            shipments_map = wh.get_shipments_map(client["warehance_id"])
+            for r in report_rows:
+                onum = r.get("Order Number", "")
+                if onum in {"Storage", "Return Processing Charges", "Return Labels Charges", "Total"}:
+                    continue
+                sdata = shipments_map.get(onum)
+                if sdata:
+                    total_shipping_cost += sdata["shipment_cost"]
+                    total_packaging_cost += WarehanceClient.calc_packaging_cost(sdata["boxes"])
+            logger.info(f"Shipment costs for {client_name}: shipping=${total_shipping_cost:.2f}, packaging=${total_packaging_cost:.2f}")
+        except Exception as e:
+            logger.warning(f"Shipments lookup failed for {client_name}: {e}")
 
+    # 8. Write P&L Data
+    try:
         yesterday = datetime.now() - timedelta(days=config["days_back"])
         pnl_date = yesterday.strftime("%m/%d/%Y")
         write_pnl_row(
@@ -248,6 +265,8 @@ def sync_client(
             client_name=client_name,
             date_str=pnl_date,
             transform_result=result,
+            shipping_cost=round(total_shipping_cost, 2),
+            packaging_cost=round(total_packaging_cost, 4),
         )
         logger.info(f"P&L row written for {client_name}")
     except Exception as e:
@@ -259,6 +278,8 @@ def sync_client(
         "orders": order_count,
         "total": result["grand_total"],
         "anomalies": len(anomalies),
+        "shipping_cost": round(total_shipping_cost, 2),
+        "packaging_cost": round(total_packaging_cost, 4),
     }
 
 
