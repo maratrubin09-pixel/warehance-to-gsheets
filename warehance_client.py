@@ -82,3 +82,57 @@ class WarehanceClient:
 
         logger.warning(f"No CSV in {len(bills)} bills for client {client_id}")
         return []
+
+    def get_shipments(self, client_id: int, date_from: str, date_to: str) -> list[dict]:
+        """
+        Fetch shipments for a client in a date range.
+
+        Returns list of dicts with keys:
+          - order_number: str
+          - shipment_cost: float  (carrier cost)
+          - parcels: list of {box: str, tracking_number: str}
+        """
+        all_shipments = []
+        page = 1
+        while True:
+            try:
+                resp = self._get("/shipments", params={
+                    "client_id": client_id,
+                    "date_from": date_from,
+                    "date_to": date_to,
+                    "limit": 100,
+                    "page": page,
+                })
+            except Exception as e:
+                logger.error(f"Shipments fetch failed (page {page}): {e}")
+                break
+
+            data = resp.get("data", {})
+            shipments = data.get("shipments", [])
+            if not shipments:
+                break
+
+            for s in shipments:
+                order = s.get("order", {}) or {}
+                order_number = order.get("order_number", "")
+                shipment_cost = float(s.get("shipment_cost", 0) or 0)
+                parcels = []
+                for p in s.get("shipment_parcels", []):
+                    parcels.append({
+                        "box": p.get("box", ""),
+                        "tracking_number": p.get("tracking_number", ""),
+                    })
+                all_shipments.append({
+                    "order_number": order_number,
+                    "shipment_cost": shipment_cost,
+                    "parcels": parcels,
+                })
+
+            # Check for next page
+            total_pages = data.get("total_pages", 1)
+            if page >= total_pages:
+                break
+            page += 1
+
+        logger.info(f"Fetched {len(all_shipments)} shipments for client {client_id}")
+        return all_shipments

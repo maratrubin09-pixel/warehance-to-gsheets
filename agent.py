@@ -34,7 +34,7 @@ from dotenv import load_dotenv
 from warehance_client import WarehanceClient
 from sheets_writer import GoogleSheetsWriter
 from transformer import transform_bill_details, parse_csv_file
-from write_pnl import write_pnl_row
+from write_pnl import write_pnl_row, format_pnl_tab
 from telegram_notifier import TelegramNotifier
 from gdrive_backup import GDriveBackup
 
@@ -68,8 +68,9 @@ def load_clients(filepath: str = "clients.json") -> list[dict]:
         data = json.load(f)
     clients = data.get("clients", [])
     dashboard_id = data.get("dashboard_spreadsheet_id", "")
+    pnl_id = data.get("pnl_spreadsheet_id", "")
     logging.getLogger("config").info(f"Loaded {len(clients)} clients")
-    return clients, dashboard_id
+    return clients, dashboard_id, pnl_id
 
 
 def validate(config: dict, clients: list[dict], use_csv: bool = False) -> list[str]:
@@ -239,15 +240,34 @@ def sync_client(
 
     # 7. Write P&L Data
     try:
-
         yesterday = datetime.now() - timedelta(days=config["days_back"])
         pnl_date = yesterday.strftime("%m/%d/%Y")
+
+        # Fetch shipments for real cost data
+        shipments = []
+        if not csv_path:
+            try:
+                day_start = yesterday.strftime("%Y-%m-%dT00:00:00Z")
+                day_end = (yesterday + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+                api_key = os.getenv("WAREHANCE_API_KEY")
+                from warehance_client import WarehanceClient as WC
+                wh_temp = WC(api_key=api_key)
+                shipments = wh_temp.get_shipments(
+                    client_id=client["warehance_id"],
+                    date_from=day_start,
+                    date_to=day_end,
+                )
+            except Exception as e:
+                logger.warning(f"Shipments fetch for P&L failed for {client_name}: {e}")
+
         write_pnl_row(
             service_account_file=config["google_sa_file"],
             client_number=client_number,
             client_name=client_name,
             date_str=pnl_date,
             transform_result=result,
+            shipments=shipments,
+            pnl_spreadsheet_id=config.get("pnl_spreadsheet_id", ""),
         )
         logger.info(f"P&L row written for {client_name}")
     except Exception as e:
@@ -401,8 +421,9 @@ def main():
     logger = logging.getLogger("main")
 
     try:
-        clients, dashboard_id = load_clients()
+        clients, dashboard_id, pnl_id = load_clients()
         config["dashboard_spreadsheet_id"] = dashboard_id
+        config["pnl_spreadsheet_id"] = pnl_id
     except FileNotFoundError as e:
         logger.error(str(e))
         sys.exit(1)
