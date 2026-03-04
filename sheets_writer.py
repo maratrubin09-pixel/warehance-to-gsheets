@@ -97,6 +97,42 @@ class GoogleSheetsWriter:
             }
         }
 
+    def clear_tab(self, spreadsheet_id: str, tab_name: str):
+        """Clear all data from a tab (keeps the tab itself)."""
+        ss = self._open(spreadsheet_id)
+        ws = self._get_ws(ss, tab_name)
+        ws.clear()
+        logger.info(f"Cleared tab '{tab_name}'")
+
+    def init_payments_tab(self, spreadsheet_id: str, tab_name: str):
+        """Re-create Payments tab structure after clearing."""
+        ss = self._open(spreadsheet_id)
+        ws = self._get_ws(ss, tab_name)
+        sheet_id = self._get_sheet_id(ws)
+
+        # Headers + Total row
+        ws.append_row(["Date", "Deposit", "Paid", "Balance", "Comments"],
+                      value_input_option="USER_ENTERED")
+        ws.append_row(["", "Total", "", "=SUM(D2:D2)", ""],
+                      value_input_option="USER_ENTERED")
+
+        # Format header row
+        fmt_requests = [
+            self._make_format_request(
+                sheet_id, 0, 0, 5,
+                bg_color=PURPLE, bold=True, font_size=12,
+                fg_color=WHITE, h_align="CENTER"),
+            self._make_row_height_request(sheet_id, 0, 36),
+            # Format Total row
+            self._make_format_request(
+                sheet_id, 1, 0, 5,
+                bg_color=PINK, bold=True, font_size=15,
+                fg_color=WHITE, h_align="CENTER"),
+            self._make_row_height_request(sheet_id, 1, 42),
+        ]
+        ss.batch_update({"requests": fmt_requests})
+        logger.info(f"Initialized Payments tab structure in '{tab_name}'")
+
     # ------------------------------------------------------------------
     # AllReports tab
     # ------------------------------------------------------------------

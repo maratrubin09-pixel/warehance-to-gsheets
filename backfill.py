@@ -2,6 +2,7 @@
 """
 Backfill: creates bills day-by-day via API, downloads CSV, writes to Sheets.
 Usage: python3 backfill.py 001 2026-01-01 2026-02-11
+       python3 backfill.py 001 2026-01-01 2026-03-02 --clear
 """
 
 import json
@@ -11,8 +12,9 @@ import time
 import requests
 import io
 import csv
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import os
 
@@ -31,14 +33,16 @@ SA_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "config/service_account.json"
 BASE = "https://api.warehance.com/v1"
 HEADERS = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
 
+PACIFIC = ZoneInfo("America/Los_Angeles")
 
-def create_bill(client_id: int, profile_id: int, start: str, end: str) -> int:
+
+def create_bill(client_id: int, profile_id: int, start_utc: str, end_utc: str) -> int:
     """POST /bills → returns bill ID."""
     r = requests.post(f"{BASE}/bills", headers=HEADERS, json={
         "client_id": client_id,
         "billing_profile_id": profile_id,
-        "start_date": f"{start}T00:00:00Z",
-        "end_date": f"{end}T00:00:00Z",
+        "start_date": start_utc,
+        "end_date": end_utc,
     }, timeout=30)
     r.raise_for_status()
     return r.json()["data"]["id"]
@@ -64,15 +68,29 @@ def download_csv(csv_url: str) -> list[dict]:
     return list(reader)
 
 
+def day_to_utc_range(day_date) -> tuple[str, str]:
+    """Convert a date to Pacific Time 00:00:00–23:59:59, returned as UTC strings."""
+    day_start_pt = datetime(day_date.year, day_date.month, day_date.day, 0, 0, 0, tzinfo=PACIFIC)
+    day_end_pt = datetime(day_date.year, day_date.month, day_date.day, 23, 59, 59, tzinfo=PACIFIC)
+    start_utc = day_start_pt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    end_utc = day_end_pt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return start_utc, end_utc
+
+
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python3 backfill.py CLIENT_NUM [START_DATE] [END_DATE]")
+        print("Usage: python3 backfill.py CLIENT_NUM [START_DATE] [END_DATE] [--clear]")
         print("Example: python3 backfill.py 001 2026-01-01 2026-02-11")
+        print("         python3 backfill.py 001 2026-01-01 2026-03-02 --clear")
         sys.exit(1)
 
-    client_num = sys.argv[1]
-    start_date = sys.argv[2] if len(sys.argv) > 2 else "2026-01-01"
-    end_date = sys.argv[3] if len(sys.argv) > 3 else "2026-02-11"
+    # Parse args (positional + --clear flag)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    clear_first = "--clear" in sys.argv
+
+    client_num = args[0]
+    start_date = args[1] if len(args) > 1 else "2026-01-01"
+    end_date = args[2] if len(args) > 2 else "2026-02-11"
 
     # Load client
     with open("clients.json") as f:
@@ -98,20 +116,22 @@ def main():
     }
 
     # Generate date list
-    dt_start = datetime.strptime(start_date, "%Y-%m-%d")
-    dt_end = datetime.strptime(end_date, "%Y-%m-%d")
+    dt_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    dt_end = datetime.strptime(end_date, "%Y-%m-%d").date()
     days = []
     current = dt_start
-    while current < dt_end:
-        next_day = current + timedelta(days=1)
-        days.append((current.strftime("%Y-%m-%d"), next_day.strftime("%Y-%m-%d")))
-        current = next_day
+    while current <= dt_end:
+        days.append(current)
+        current += timedelta(days=1)
 
     print(f"\n{'='*60}")
     print(f"BACKFILL: {client_num}.{client_name}")
     print(f"Profile: {profile_id}")
     print(f"Period: {start_date} → {end_date} ({len(days)} days)")
     print(f"Sheet: {spreadsheet_id}")
+    print(f"Timezone: Pacific Time (America/Los_Angeles)")
+    if clear_first:
+        print(f"MODE: CLEAR + REWRITE (AllReports & Payments will be wiped first)")
     print(f"{'='*60}")
 
     confirm = input("\nStart backfill? (y/n): ").strip().lower()
@@ -120,16 +140,27 @@ def main():
         return
 
     gs = GoogleSheetsWriter(service_account_file=SA_FILE)
+
+    # Clear tabs if requested
+    if clear_first:
+        print("\nClearing tabs...")
+        gs.clear_tab(spreadsheet_id, allreports_tab)
+        gs.clear_tab(spreadsheet_id, payments_tab)
+        gs.init_payments_tab(spreadsheet_id, payments_tab)
+        print("Tabs cleared and Payments re-initialized.")
+
     total_orders = 0
     total_amount = 0.0
     skipped = 0
 
-    for i, (day_start, day_end) in enumerate(days):
-        print(f"\n[{i+1}/{len(days)}] {day_start}", end=" ")
+    for i, day_date in enumerate(days):
+        print(f"\n[{i+1}/{len(days)}] {day_date}", end=" ")
+
+        start_utc, end_utc = day_to_utc_range(day_date)
 
         # 1. Create bill
         try:
-            bill_id = create_bill(client_id, profile_id, day_start, day_end)
+            bill_id = create_bill(client_id, profile_id, start_utc, end_utc)
         except Exception as e:
             print(f"❌ Create failed: {e}")
             continue
@@ -139,14 +170,13 @@ def main():
         csv_url = bill_data.get("line_item_details_csv_url", "")
         charges = bill_data.get("total_amount", 0)
 
-        # Format payment date from day_start
-        from datetime import datetime as dt2
-        pay_date = dt2.strptime(day_start, "%Y-%m-%d").strftime("%m/%d/%y")
+        # Format payment date
+        pay_date = day_date.strftime("%m/%d/%y")
 
         if not csv_url or charges == 0:
             # Write $0 day to AllReports and Payments
             from transformer import ALLREPORTS_HEADERS
-            zero_date = dt2.strptime(day_start, "%Y-%m-%d").strftime("%m.%d.%Y")
+            zero_date = day_date.strftime("%m.%d.%Y")
             zero_rows = [
                 {"Date": "", "Order Number": "Storage", "Tracking number": "", "Storage/Returns": 0, "Shipping cost": "", "Pick&Pack fee": "", "Package cost": "", "Total": 0},
                 {"Date": "", "Order Number": "Return Processing Charges", "Tracking number": "", "Storage/Returns": 0, "Shipping cost": "", "Pick&Pack fee": "", "Package cost": "", "Total": 0},
