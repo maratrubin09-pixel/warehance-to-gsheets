@@ -26,8 +26,9 @@ import io
 import os
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
@@ -128,33 +129,41 @@ def sync_client(
     if csv_path:
         raw_rows = parse_csv_file(csv_path)
     else:
-        # Create bill via API for yesterday
-        yesterday = datetime.now() - timedelta(days=config["days_back"])
-        day_start = yesterday.strftime("%Y-%m-%d")
-        day_end = (yesterday + timedelta(days=1)).strftime("%Y-%m-%d")
-        
+        # Calculate billing day in Pacific Time (Warehance server timezone)
+        pacific = ZoneInfo("America/Los_Angeles")
+        now_pacific = datetime.now(pacific)
+        target_day = (now_pacific - timedelta(days=config["days_back"])).date()
+
+        # Billing range: target_day 00:00:00 PT to 23:59:59 PT, converted to UTC
+        day_start_pt = datetime(target_day.year, target_day.month, target_day.day, 0, 0, 0, tzinfo=pacific)
+        day_end_pt = datetime(target_day.year, target_day.month, target_day.day, 23, 59, 59, tzinfo=pacific)
+        day_start_utc = day_start_pt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        day_end_utc = day_end_pt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        logger.info(f"Billing range: {target_day} PT → {day_start_utc} to {day_end_utc}")
+
         billing_profile_id = client.get("billing_profile_id")
         if not billing_profile_id:
             logger.warning(f"No billing_profile_id for {client_name}")
             return {"client": client_name, "error": "no billing_profile_id"}
-        
+
         api_key = os.getenv("WAREHANCE_API_KEY")
         headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
-        
+
         try:
             r = requests.post("https://api.warehance.com/v1/bills", headers=headers, json={
                 "client_id": client["warehance_id"],
                 "billing_profile_id": billing_profile_id,
-                "start_date": f"{day_start}T00:00:00Z",
-                "end_date": f"{day_end}T00:00:00Z",
+                "start_date": day_start_utc,
+                "end_date": day_end_utc,
             }, timeout=30)
             r.raise_for_status()
             bill_id = r.json()["data"]["id"]
-            logger.info(f"Created bill {bill_id} for {client_name} ({day_start})")
+            logger.info(f"Created bill {bill_id} for {client_name} ({target_day})")
         except Exception as e:
             logger.error(f"Bill creation failed for {client_name}: {e}")
             return {"client": client_name, "error": str(e)}
-        
+
         # Wait for bill generation
         raw_rows = []
         h = {"X-API-Key": api_key}
@@ -240,22 +249,26 @@ def sync_client(
 
     # 7. Write P&L Data
     try:
-        yesterday = datetime.now() - timedelta(days=config["days_back"])
-        pnl_date = yesterday.strftime("%m/%d/%Y")
+        pacific = ZoneInfo("America/Los_Angeles")
+        now_pacific = datetime.now(pacific)
+        target_day = (now_pacific - timedelta(days=config["days_back"])).date()
+        pnl_date = target_day.strftime("%m/%d/%Y")
 
-        # Fetch shipments for real cost data
+        # Fetch shipments for real cost data (same Pacific Time range)
         shipments = []
         if not csv_path:
             try:
-                day_start = yesterday.strftime("%Y-%m-%dT00:00:00Z")
-                day_end = (yesterday + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+                day_start_pt = datetime(target_day.year, target_day.month, target_day.day, 0, 0, 0, tzinfo=pacific)
+                day_end_pt = datetime(target_day.year, target_day.month, target_day.day, 23, 59, 59, tzinfo=pacific)
+                ship_start = day_start_pt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                ship_end = day_end_pt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 api_key = os.getenv("WAREHANCE_API_KEY")
                 from warehance_client import WarehanceClient as WC
                 wh_temp = WC(api_key=api_key)
                 shipments = wh_temp.get_shipments(
                     client_id=client["warehance_id"],
-                    date_from=day_start,
-                    date_to=day_end,
+                    date_from=ship_start,
+                    date_to=ship_end,
                 )
             except Exception as e:
                 logger.warning(f"Shipments fetch for P&L failed for {client_name}: {e}")
