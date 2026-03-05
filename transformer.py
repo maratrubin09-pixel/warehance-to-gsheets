@@ -9,6 +9,7 @@ Handles TWO CSV formats:
 import csv
 import logging
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -78,11 +79,15 @@ def _format_date_short(iso_date: str) -> str:
         return iso_date[:10]
 
 
+_PACIFIC = ZoneInfo("America/Los_Angeles")
+
+
 def _format_date_full(iso_date: str) -> str:
     if not iso_date:
         return ""
     try:
         dt = datetime.fromisoformat(iso_date.replace("Z", "+00:00"))
+        dt = dt.astimezone(_PACIFIC)
         return dt.strftime("%m.%d.%Y")
     except (ValueError, TypeError):
         return iso_date[:10]
@@ -93,6 +98,7 @@ def _format_date_payments(iso_date: str) -> str:
         return ""
     try:
         dt = datetime.fromisoformat(iso_date.replace("Z", "+00:00"))
+        dt = dt.astimezone(_PACIFIC)
         return dt.strftime("%m/%d/%y")
     except (ValueError, TypeError):
         return iso_date[:10]

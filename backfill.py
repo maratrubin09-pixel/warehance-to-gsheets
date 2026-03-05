@@ -36,13 +36,13 @@ HEADERS = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
-def create_bill(client_id: int, profile_id: int, start_utc: str, end_utc: str) -> int:
+def create_bill(client_id: int, profile_id: int, start_date: str, end_date: str) -> int:
     """POST /bills → returns bill ID."""
     r = requests.post(f"{BASE}/bills", headers=HEADERS, json={
         "client_id": client_id,
         "billing_profile_id": profile_id,
-        "start_date": start_utc,
-        "end_date": end_utc,
+        "start_date": start_date,
+        "end_date": end_date,
     }, timeout=30)
     r.raise_for_status()
     return r.json()["data"]["id"]
@@ -68,13 +68,14 @@ def download_csv(csv_url: str) -> list[dict]:
     return list(reader)
 
 
-def day_to_utc_range(day_date) -> tuple[str, str]:
-    """Convert a date to Pacific Time 00:00:00–23:59:59, returned as UTC strings."""
-    day_start_pt = datetime(day_date.year, day_date.month, day_date.day, 0, 0, 0, tzinfo=PACIFIC)
-    day_end_pt = datetime(day_date.year, day_date.month, day_date.day, 23, 59, 59, tzinfo=PACIFIC)
-    start_utc = day_start_pt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    end_utc = day_end_pt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return start_utc, end_utc
+def day_to_bill_dates(day_date) -> tuple[str, str]:
+    """Convert a date to start/end timestamps with Pacific Time offset for the API."""
+    day_start = datetime(day_date.year, day_date.month, day_date.day, 0, 0, 0, tzinfo=PACIFIC)
+    day_end = datetime(day_date.year, day_date.month, day_date.day, 23, 59, 59, tzinfo=PACIFIC)
+    # Format with timezone offset (e.g. -08:00 or -07:00 for DST)
+    start_str = day_start.strftime("%Y-%m-%dT%H:%M:%S") + day_start.strftime("%z")[:3] + ":" + day_start.strftime("%z")[3:]
+    end_str = day_end.strftime("%Y-%m-%dT%H:%M:%S") + day_end.strftime("%z")[:3] + ":" + day_end.strftime("%z")[3:]
+    return start_str, end_str
 
 
 def main():
@@ -155,11 +156,11 @@ def main():
     for i, day_date in enumerate(days):
         print(f"\n[{i+1}/{len(days)}] {day_date}", end=" ")
 
-        start_utc, end_utc = day_to_utc_range(day_date)
+        start_dt, end_dt = day_to_bill_dates(day_date)
 
         # 1. Create bill
         try:
-            bill_id = create_bill(client_id, profile_id, start_utc, end_utc)
+            bill_id = create_bill(client_id, profile_id, start_dt, end_dt)
         except Exception as e:
             print(f"❌ Create failed: {e}")
             continue

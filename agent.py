@@ -134,13 +134,14 @@ def sync_client(
         now_pacific = datetime.now(pacific)
         target_day = (now_pacific - timedelta(days=config["days_back"])).date()
 
-        # Billing range: target_day 00:00:00 PT to 23:59:59 PT, converted to UTC
+        # Billing range: target_day 00:00:00–23:59:59 Pacific Time with TZ offset
         day_start_pt = datetime(target_day.year, target_day.month, target_day.day, 0, 0, 0, tzinfo=pacific)
         day_end_pt = datetime(target_day.year, target_day.month, target_day.day, 23, 59, 59, tzinfo=pacific)
-        day_start_utc = day_start_pt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        day_end_utc = day_end_pt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _fmt_tz = lambda dt: dt.strftime("%Y-%m-%dT%H:%M:%S") + dt.strftime("%z")[:3] + ":" + dt.strftime("%z")[3:]
+        bill_start = _fmt_tz(day_start_pt)
+        bill_end = _fmt_tz(day_end_pt)
 
-        logger.info(f"Billing range: {target_day} PT → {day_start_utc} to {day_end_utc}")
+        logger.info(f"Billing range: {target_day} → {bill_start} to {bill_end}")
 
         billing_profile_id = client.get("billing_profile_id")
         if not billing_profile_id:
@@ -154,8 +155,8 @@ def sync_client(
             r = requests.post("https://api.warehance.com/v1/bills", headers=headers, json={
                 "client_id": client["warehance_id"],
                 "billing_profile_id": billing_profile_id,
-                "start_date": day_start_utc,
-                "end_date": day_end_utc,
+                "start_date": bill_start,
+                "end_date": bill_end,
             }, timeout=30)
             r.raise_for_status()
             bill_id = r.json()["data"]["id"]
