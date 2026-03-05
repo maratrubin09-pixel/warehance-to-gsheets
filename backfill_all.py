@@ -34,7 +34,7 @@ for c in data["clients"]:
         cmd,
         input="y\n",
         text=True,
-        timeout=600,
+        timeout=1800,
     )
 
     if result.returncode != 0:

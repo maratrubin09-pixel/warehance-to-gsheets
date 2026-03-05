@@ -143,11 +143,10 @@ def main():
 
     # Clear tabs if requested
     if clear_first:
-        print("\nClearing tabs...")
-        gs.clear_tab(spreadsheet_id, allreports_tab)
-        gs.clear_tab(spreadsheet_id, payments_tab)
-        gs.init_payments_tab(spreadsheet_id, payments_tab)
-        print("Tabs cleared and Payments re-initialized.")
+        print("\nClearing and re-initializing tabs...")
+        gs.clear_and_init_allreports(spreadsheet_id, allreports_tab, client_num, client_name)
+        gs.clear_and_init_payments(spreadsheet_id, payments_tab)
+        print("Tabs cleared and re-initialized with branded headers.")
 
     total_orders = 0
     total_amount = 0.0

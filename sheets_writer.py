@@ -97,41 +97,172 @@ class GoogleSheetsWriter:
             }
         }
 
-    def clear_tab(self, spreadsheet_id: str, tab_name: str):
-        """Clear all data from a tab (keeps the tab itself)."""
-        ss = self._open(spreadsheet_id)
-        ws = self._get_ws(ss, tab_name)
-        ws.clear()
-        logger.info(f"Cleared tab '{tab_name}'")
-
-    def init_payments_tab(self, spreadsheet_id: str, tab_name: str):
-        """Re-create Payments tab structure after clearing."""
+    def clear_and_init_allreports(self, spreadsheet_id: str, tab_name: str,
+                                    client_number: str = "", client_name: str = ""):
+        """Clear AllReports tab and re-create the branded header structure."""
         ss = self._open(spreadsheet_id)
         ws = self._get_ws(ss, tab_name)
         sheet_id = self._get_sheet_id(ws)
 
-        # Headers + Total row
-        ws.append_row(["Date", "Deposit", "Paid", "Balance", "Comments"],
-                      value_input_option="USER_ENTERED")
-        ws.append_row(["", "Total", "", "=SUM(D2:D2)", ""],
-                      value_input_option="USER_ENTERED")
+        # Unmerge all cells first, then clear
+        ss.batch_update({"requests": [{
+            "unmergeCells": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1000,
+                          "startColumnIndex": 0, "endColumnIndex": 20}
+            }
+        }]})
+        ws.clear()
+        # Also clear formatting
+        ss.batch_update({"requests": [{
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1000,
+                          "startColumnIndex": 0, "endColumnIndex": 20},
+                "cell": {"userEnteredFormat": {}},
+                "fields": "userEnteredFormat",
+            }
+        }]})
 
-        # Format header row
-        fmt_requests = [
-            self._make_format_request(
-                sheet_id, 0, 0, 5,
-                bg_color=PURPLE, bold=True, font_size=12,
-                fg_color=WHITE, h_align="CENTER"),
-            self._make_row_height_request(sheet_id, 0, 36),
-            # Format Total row
-            self._make_format_request(
-                sheet_id, 1, 0, 5,
-                bg_color=PINK, bold=True, font_size=15,
-                fg_color=WHITE, h_align="CENTER"),
-            self._make_row_height_request(sheet_id, 1, 42),
-        ]
-        ss.batch_update({"requests": fmt_requests})
-        logger.info(f"Initialized Payments tab structure in '{tab_name}'")
+        # Brand colors
+        DEEP_PURPLE = {"red": 0.176, "green": 0.106, "blue": 0.412}
+        GREEN = {"red": 0.0, "green": 0.769, "blue": 0.549}
+        COL_WIDTHS = [80, 160, 240, 110, 110, 110, 110, 110]
+
+        reqs = []
+        # Column widths
+        for i, w in enumerate(COL_WIDTHS):
+            reqs.append({
+                "updateDimensionProperties": {
+                    "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
+                              "startIndex": i, "endIndex": i + 1},
+                    "properties": {"pixelSize": w}, "fields": "pixelSize",
+                }
+            })
+
+        # Row 1-2: Header banner (deep purple)
+        reqs.append(self._make_row_height_request(sheet_id, 0, 30))
+        reqs.append(self._make_row_height_request(sheet_id, 1, 30))
+        reqs.append(self._make_format_request(
+            sheet_id, 0, 0, 8, bg_color=DEEP_PURPLE, bold=True, font_size=14, fg_color=WHITE))
+        reqs.append(self._make_format_request(
+            sheet_id, 1, 0, 8, bg_color=DEEP_PURPLE, bold=True, font_size=14, fg_color=WHITE))
+        # Merge A1:B2 for FAST PREP USA
+        reqs.append({
+            "mergeCells": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 2,
+                          "startColumnIndex": 0, "endColumnIndex": 2},
+                "mergeType": "MERGE_ALL",
+            }
+        })
+        # Row 3: spacer
+        reqs.append(self._make_row_height_request(sheet_id, 2, 8))
+        # Row 4: column headers (purple bg)
+        reqs.append(self._make_row_height_request(sheet_id, 3, 32))
+        reqs.append(self._make_format_request(
+            sheet_id, 3, 0, 8, bg_color=PURPLE, bold=True, font_size=11, fg_color=WHITE, h_align="CENTER"))
+
+        # Shipping Status green cell
+        reqs.append(self._make_format_request(
+            sheet_id, 1, 2, 3, bg_color=GREEN, bold=True, font_size=14, fg_color=WHITE, h_align="CENTER"))
+        # Balance cell
+        reqs.append(self._make_format_request(
+            sheet_id, 1, 3, 4, bg_color=DEEP_PURPLE, bold=True, font_size=14, fg_color=PINK, h_align="CENTER"))
+        # Payment methods row 1 E-H
+        reqs.append(self._make_format_request(
+            sheet_id, 0, 4, 8, bg_color=DEEP_PURPLE, font_size=10, fg_color=WHITE, h_align="CENTER"))
+        reqs.append({
+            "mergeCells": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1,
+                          "startColumnIndex": 4, "endColumnIndex": 8},
+                "mergeType": "MERGE_ALL",
+            }
+        })
+        # Payment email row 2 E-H
+        reqs.append(self._make_format_request(
+            sheet_id, 1, 4, 8, bg_color=DEEP_PURPLE, font_size=11, fg_color=PINK, h_align="CENTER"))
+
+        ss.batch_update({"requests": reqs})
+
+        # Write header content
+        ws.update("A1", [["FAST PREP USA"]], value_input_option="RAW")
+        ws.update("C1", [["Shipping Status"]], value_input_option="RAW")
+        ws.update("D1", [["Balance"]], value_input_option="RAW")
+        ws.update("E1", [["Payments:  Zelle  ·  Wise  ·  Payoneer  ·  PayPal"]], value_input_option="RAW")
+        ws.update("C2", [["ON"]], value_input_option="RAW")
+        # Balance formula: total deposits minus total paid from Payments tab
+        ws.update("D2", [["=SUM(Payments!B:B)-SUM(Payments!C:C)"]], value_input_option="USER_ENTERED")
+        ws.update("E2", [["payments@fastprepusa.com"]], value_input_option="RAW")
+
+        # Column headers row 4
+        headers = ["Date", "Order Number", "Tracking number", "Storage/Returns",
+                   "Shipping cost", "Pick&Pack fee", "Package cost", "Total"]
+        ws.update("A4:H4", [headers], value_input_option="RAW")
+
+        logger.info(f"AllReports tab cleared and re-initialized for {client_number} {client_name}")
+
+    def clear_and_init_payments(self, spreadsheet_id: str, tab_name: str):
+        """Clear Payments tab and re-create the branded structure."""
+        ss = self._open(spreadsheet_id)
+        ws = self._get_ws(ss, tab_name)
+        sheet_id = self._get_sheet_id(ws)
+
+        # Unmerge + clear + clear formatting
+        try:
+            ss.batch_update({"requests": [{
+                "unmergeCells": {
+                    "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1000,
+                              "startColumnIndex": 0, "endColumnIndex": 20}
+                }
+            }]})
+        except Exception:
+            pass
+        ws.clear()
+        ss.batch_update({"requests": [{
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1000,
+                          "startColumnIndex": 0, "endColumnIndex": 20},
+                "cell": {"userEnteredFormat": {}},
+                "fields": "userEnteredFormat",
+            }
+        }]})
+
+        COL_WIDTHS_PAY = [120, 120, 120, 140, 180, 180]
+
+        reqs = []
+        for i, w in enumerate(COL_WIDTHS_PAY):
+            reqs.append({
+                "updateDimensionProperties": {
+                    "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
+                              "startIndex": i, "endIndex": i + 1},
+                    "properties": {"pixelSize": w}, "fields": "pixelSize",
+                }
+            })
+
+        # Row 1: headers
+        reqs.append(self._make_row_height_request(sheet_id, 0, 36))
+        reqs.append(self._make_format_request(
+            sheet_id, 0, 0, 6, bg_color=PURPLE, bold=True, font_size=13, fg_color=WHITE, h_align="CENTER"))
+        # Row 2: Total
+        reqs.append(self._make_row_height_request(sheet_id, 1, 42))
+        reqs.append(self._make_format_request(
+            sheet_id, 1, 0, 6, bg_color=PINK, bold=True, font_size=15, fg_color=WHITE, h_align="CENTER"))
+        # Border under Total
+        reqs.append({
+            "updateBorders": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 2,
+                          "startColumnIndex": 0, "endColumnIndex": 6},
+                "bottom": {"style": "SOLID_MEDIUM", "color": PURPLE_TEXT},
+            }
+        })
+
+        ss.batch_update({"requests": reqs})
+
+        # Write content
+        headers = ["Date", "Deposit", "Paid", "Balance", "Comments", "Customer info"]
+        ws.update("A1:F1", [headers], value_input_option="RAW")
+        ws.update("B2", [["Total"]], value_input_option="RAW")
+        ws.update("D2", [["=SUM(D2:D2)"]], value_input_option="USER_ENTERED")
+
+        logger.info(f"Payments tab cleared and re-initialized")
 
     # ------------------------------------------------------------------
     # AllReports tab
