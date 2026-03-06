@@ -2,7 +2,7 @@ name: Daily Warehance Sync
 
 on:
   schedule:
-    - cron: '1 5 * * *'  # 00:01 EST (05:01 UTC)
+    - cron: '1 8 * * *'  # 00:01 PST (08:01 UTC)
   workflow_dispatch:
 
 jobs:
