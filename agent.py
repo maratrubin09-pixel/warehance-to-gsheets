@@ -324,7 +324,113 @@ def sync_client(
             time.sleep(2)
 
     if not raw_rows:
-        logger.info(f"No data for {client_name}")
+        logger.info(f"No bill data for {client_name} — writing zero-activity report")
+        # Build a minimal zero-activity result so AllReports/Payments/P&L still get a row
+        pacific = ZoneInfo("America/Los_Angeles")
+        now_pacific = datetime.now(pacific)
+        target_day = (now_pacific - timedelta(days=config["days_back"])).date()
+        zero_date_full = target_day.strftime("%m.%d.%Y")   # AllReports format
+        zero_date_short = target_day.strftime("%-m.%d")      # Date column short
+        zero_date_pay = target_day.strftime("%m/%d/%y")      # Payments format
+
+        report_rows = [
+            {"Date": "", "Order Number": "Storage", "Tracking number": "",
+             "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "",
+             "Shipping cost": "0", "Total": 0},
+            {"Date": "", "Order Number": "Return Processing Charges", "Tracking number": "",
+             "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "",
+             "Shipping cost": "0", "Total": 0},
+            {"Date": "", "Order Number": "Return Labels Charges", "Tracking number": "",
+             "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "",
+             "Shipping cost": "0", "Total": 0},
+            {"Date": zero_date_full, "Order Number": "Total", "Tracking number": "",
+             "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "",
+             "Shipping cost": "", "Total": 0},
+        ]
+        from transformer import ALLREPORTS_HEADERS
+        result = {
+            "report_rows": report_rows,
+            "headers": ALLREPORTS_HEADERS,
+            "payments_row": {"date": zero_date_pay, "paid": 0},
+            "payments_rows": [],  # SOLMAR 257 breakdown handled below
+            "grand_total": 0,
+            "anomalies": [],
+            "report_date": zero_date_full,
+            "missing_pick_orders": [],
+            "category_totals": {"storage": 0, "return_processing": 0, "return_labels": 0, "orders_total": 0},
+        }
+        # For SOLMAR 257: write a zero Shopify line
+        if client_number == "257":
+            result["payments_rows"] = [{"date": zero_date_pay, "paid": 0, "comment": "Shopify"}]
+
+        raw_rows = []  # keep it empty for the backup/transform skip below
+        order_count = 0
+        anomalies = []
+        payments = result["payments_row"]
+        report_label = f"Report — {client_number} {client_name}"
+
+        # Skip directly to writing (no backup, no transform, no split-day)
+        # --- Write AllReports ---
+        allreports_tab = client.get("allreports_tab", "AllReports")
+        report_date = result["report_date"]
+        try:
+            client_ss = gs.client.open_by_key(spreadsheet_id)
+            ar_ws = client_ss.worksheet(allreports_tab)
+            existing_vals = ar_ws.get_all_values()
+            date_exists = any(
+                row[0] == report_date and len(row) > 1 and row[1] == "Total"
+                for row in existing_vals
+            )
+            if date_exists:
+                logger.info(f"AllReports already has zero-activity data for {report_date}, skipping")
+            else:
+                gs.write_allreports(
+                    spreadsheet_id=spreadsheet_id,
+                    tab_name=allreports_tab,
+                    records=report_rows,
+                    headers=result["headers"],
+                    report_date=report_date,
+                    report_label=report_label,
+                )
+        except Exception as e:
+            logger.error(f"Zero-activity AllReports write failed for {client_name}: {e}")
+
+        # --- Write Payments ---
+        payments_tab = client.get("payments_tab", "Payments")
+        payments_rows_list = result.get("payments_rows", [])
+        if payments_rows_list and client_number == "257":
+            for pr in payments_rows_list:
+                gs.write_payment(
+                    spreadsheet_id=spreadsheet_id,
+                    tab_name=payments_tab,
+                    date=pr["date"],
+                    paid_amount=pr["paid"],
+                    comment=pr.get("comment", ""),
+                )
+        else:
+            gs.write_payment(
+                spreadsheet_id=spreadsheet_id,
+                tab_name=payments_tab,
+                date=payments["date"],
+                paid_amount=payments["paid"],
+            )
+
+        # --- Write P&L ---
+        try:
+            pnl_date = target_day.strftime("%m/%d/%Y")
+            write_pnl_row(
+                service_account_file=config["google_sa_file"],
+                client_number=client_number,
+                client_name=client_name,
+                date_str=pnl_date,
+                transform_result=result,
+                shipments=[],
+                pnl_spreadsheet_id=config.get("pnl_spreadsheet_id", ""),
+            )
+            logger.info(f"P&L zero-activity row written for {client_name}")
+        except Exception as e:
+            logger.warning(f"P&L write failed for zero-activity {client_name}: {e}")
+
         return {"client": client_name, "raw_rows": 0, "orders": 0, "total": 0}
 
     # 2. Backup raw data to Google Drive
@@ -453,44 +559,51 @@ def sync_client(
             paid_amount=payments["paid"],
         )
 
-    # 7. Write P&L Data
-    try:
-        pacific = ZoneInfo("America/Los_Angeles")
-        now_pacific = datetime.now(pacific)
-        target_day = (now_pacific - timedelta(days=config["days_back"])).date()
-        pnl_date = target_day.strftime("%m/%d/%Y")
+    # 7. Write P&L Data (with retry for robustness)
+    pnl_attempts = 2
+    for pnl_try in range(pnl_attempts):
+        try:
+            pacific = ZoneInfo("America/Los_Angeles")
+            now_pacific = datetime.now(pacific)
+            target_day = (now_pacific - timedelta(days=config["days_back"])).date()
+            pnl_date = target_day.strftime("%m/%d/%Y")
 
-        # Fetch shipments for real cost data (same Pacific Time range)
-        shipments = []
-        if not csv_path:
-            try:
-                day_start_pt = datetime(target_day.year, target_day.month, target_day.day, 0, 0, 0, tzinfo=pacific)
-                day_end_pt = datetime(target_day.year, target_day.month, target_day.day, 23, 59, 59, tzinfo=pacific)
-                ship_start = day_start_pt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                ship_end = day_end_pt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                api_key = os.getenv("WAREHANCE_API_KEY")
-                from warehance_client import WarehanceClient as WC
-                wh_temp = WC(api_key=api_key)
-                shipments = wh_temp.get_shipments(
-                    client_id=client["warehance_id"],
-                    date_from=ship_start,
-                    date_to=ship_end,
-                )
-            except Exception as e:
-                logger.warning(f"Shipments fetch for P&L failed for {client_name}: {e}")
+            # Fetch shipments for real cost data (same Pacific Time range)
+            shipments = []
+            if not csv_path:
+                try:
+                    day_start_pt = datetime(target_day.year, target_day.month, target_day.day, 0, 0, 0, tzinfo=pacific)
+                    day_end_pt = datetime(target_day.year, target_day.month, target_day.day, 23, 59, 59, tzinfo=pacific)
+                    ship_start = day_start_pt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    ship_end = day_end_pt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    api_key = os.getenv("WAREHANCE_API_KEY")
+                    from warehance_client import WarehanceClient as WC
+                    wh_temp = WC(api_key=api_key)
+                    shipments = wh_temp.get_shipments(
+                        client_id=client["warehance_id"],
+                        date_from=ship_start,
+                        date_to=ship_end,
+                    )
+                except Exception as e:
+                    logger.warning(f"Shipments fetch for P&L failed for {client_name}: {e}")
 
-        write_pnl_row(
-            service_account_file=config["google_sa_file"],
-            client_number=client_number,
-            client_name=client_name,
-            date_str=pnl_date,
-            transform_result=result,
-            shipments=shipments,
-            pnl_spreadsheet_id=config.get("pnl_spreadsheet_id", ""),
-        )
-        logger.info(f"P&L row written for {client_name}")
-    except Exception as e:
-        logger.warning(f"P&L write failed for {client_name}: {e}")
+            write_pnl_row(
+                service_account_file=config["google_sa_file"],
+                client_number=client_number,
+                client_name=client_name,
+                date_str=pnl_date,
+                transform_result=result,
+                shipments=shipments,
+                pnl_spreadsheet_id=config.get("pnl_spreadsheet_id", ""),
+            )
+            logger.info(f"P&L row written for {client_name}")
+            break
+        except Exception as e:
+            if pnl_try < pnl_attempts - 1:
+                logger.warning(f"P&L write attempt {pnl_try + 1} failed for {client_name}: {e}, retrying...")
+                time.sleep(3)
+            else:
+                logger.warning(f"P&L write failed for {client_name} after {pnl_attempts} attempts: {e}")
 
     return {
         "client": client_name,

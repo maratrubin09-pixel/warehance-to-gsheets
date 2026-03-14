@@ -1,8 +1,11 @@
 """
 Write daily P&L data to the P&L Dashboard spreadsheet.
 
-v2: Added Packaging Profit, Shipping Profit columns.
-    Reads packaging revenue from new Packaging Cost column in AllReports.
+v2.1: Aligned with actual 16-column Data tab schema:
+  Date | Client # | Client Name | Orders | Storage | Return Processing |
+  Pick & Pack | Packaging Revenue | Shipping Revenue | Return Labels |
+  Shipping Cost | Packaging Cost | Total Revenue | Total Cost |
+  Gross Profit | Margin %
 """
 import json
 import logging
@@ -15,14 +18,13 @@ from brand_config import DEEP_PURPLE, PURPLE, WHITE
 
 logger = logging.getLogger(__name__)
 
-# Column headers for the Data tab (v2 — expanded)
+# Column headers for the Data tab — must match actual sheet
 PNL_HEADERS = [
     "Date", "Client #", "Client Name", "Orders",
-    "Pick & Pack Revenue", "Storage Revenue",
-    "Return Processing", "Return Labels",
-    "Packaging Revenue", "Packaging Cost (COGS)",  "Packaging Profit",
-    "Shipping Revenue", "Shipping Cost (COGS)", "Shipping Profit",
-    "Total Revenue", "Total COGS", "Gross Profit", "Gross Margin %",
+    "Storage", "Return Processing", "Pick & Pack",
+    "Packaging Revenue", "Shipping Revenue", "Return Labels",
+    "Shipping Cost", "Packaging Cost",
+    "Total Revenue", "Total Cost", "Gross Profit", "Margin %",
 ]
 
 # Load packaging costs mapping (box name -> cost)
@@ -35,11 +37,6 @@ if _pkg_costs_path.exists():
 
 
 def _calc_costs_from_shipments(shipments: list[dict]) -> dict:
-    """
-    Calculate real shipping cost and packaging cost from Shipments API data.
-
-    Returns dict with total_shipping_cost and total_packaging_cost.
-    """
     total_shipping_cost = 0.0
     total_packaging_cost = 0.0
     unknown_boxes = set()
@@ -87,7 +84,6 @@ def write_pnl_row(
 
     ss = gc.open_by_key(pnl_spreadsheet_id)
 
-    # Get or create Data tab
     try:
         ws = ss.worksheet("Data")
     except gspread.WorksheetNotFound:
@@ -136,37 +132,34 @@ def write_pnl_row(
         logger.info("No shipments data provided, costs set to $0")
 
     # Calculated fields
-    packaging_profit = round(packaging_rev - packaging_cost, 2)
-    shipping_profit = round(shipping_rev - shipping_cost, 2)
-    total_revenue = storage + return_processing + pick_pack + packaging_rev + shipping_rev + return_labels
-    total_cost = shipping_cost + packaging_cost
-    gross_profit = total_revenue - total_cost
+    total_revenue = round(storage + return_processing + pick_pack + packaging_rev + shipping_rev + return_labels, 2)
+    total_cost = round(shipping_cost + packaging_cost, 2)
+    gross_profit = round(total_revenue - total_cost, 2)
     margin = round(gross_profit / total_revenue * 100, 1) if total_revenue > 0 else 0
 
+    # Row matches 16-column schema exactly
     row = [
-        date_str,
-        "'" + str(client_number),
-        client_name,
-        orders,
-        round(pick_pack, 2),
-        round(storage, 2),
-        round(return_processing, 2),
-        round(return_labels, 2),
-        round(packaging_rev, 2),
-        round(packaging_cost, 2),
-        packaging_profit,
-        round(shipping_rev, 2),
-        round(shipping_cost, 2),
-        shipping_profit,
-        round(total_revenue, 2),
-        round(total_cost, 2),
-        round(gross_profit, 2),
-        margin,
+        date_str,                        # Date
+        "'" + str(client_number),        # Client #
+        client_name,                     # Client Name
+        orders,                          # Orders
+        round(storage, 2),               # Storage
+        round(return_processing, 2),     # Return Processing
+        round(pick_pack, 2),             # Pick & Pack
+        round(packaging_rev, 2),         # Packaging Revenue
+        round(shipping_rev, 2),          # Shipping Revenue
+        round(return_labels, 2),         # Return Labels
+        round(shipping_cost, 2),         # Shipping Cost
+        round(packaging_cost, 2),        # Packaging Cost
+        total_revenue,                   # Total Revenue
+        total_cost,                      # Total Cost
+        gross_profit,                    # Gross Profit
+        margin,                          # Margin %
     ]
 
     # Duplicate protection: check if row for this date+client already exists
     existing = ws.get_all_values()
-    num_cols_letter = chr(64 + len(PNL_HEADERS))  # 18 cols = R
+    num_cols_letter = chr(64 + len(PNL_HEADERS))  # 16 cols = P
     for i, existing_row in enumerate(existing):
         if i == 0:
             continue
@@ -228,26 +221,24 @@ def _format_headers(ss, ws):
 
 
 def _col_width_requests(sheet_id: int) -> list[dict]:
-    """Generate column width update requests."""
+    """Generate column width update requests for 16-column layout."""
     widths = [
         100,  # A: Date
         70,   # B: Client #
         160,  # C: Client Name
         60,   # D: Orders
-        110,  # E: Pick & Pack Revenue
-        100,  # F: Storage Revenue
-        120,  # G: Return Processing
-        100,  # H: Return Labels
-        120,  # I: Packaging Revenue
-        120,  # J: Packaging Cost (COGS)
-        110,  # K: Packaging Profit
-        120,  # L: Shipping Revenue
-        120,  # M: Shipping Cost (COGS)
-        110,  # N: Shipping Profit
-        110,  # O: Total Revenue
-        100,  # P: Total COGS
-        110,  # Q: Gross Profit
-        90,   # R: Gross Margin %
+        100,  # E: Storage
+        120,  # F: Return Processing
+        100,  # G: Pick & Pack
+        120,  # H: Packaging Revenue
+        120,  # I: Shipping Revenue
+        100,  # J: Return Labels
+        110,  # K: Shipping Cost
+        110,  # L: Packaging Cost
+        110,  # M: Total Revenue
+        100,  # N: Total Cost
+        110,  # O: Gross Profit
+        90,   # P: Margin %
     ]
     reqs = []
     for i, w in enumerate(widths):
