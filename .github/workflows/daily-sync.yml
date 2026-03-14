@@ -18,7 +18,7 @@ jobs:
           python-version: '3.13'
 
       - name: Install dependencies
-        run: pip install gspread google-auth google-api-python-client requests python-dotenv tenacity
+        run: pip install -r requirements.txt
 
       - name: Write service account key
         run: |
