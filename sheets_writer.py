@@ -112,7 +112,6 @@ class GoogleSheetsWriter:
             }
         }]})
         ws.clear()
-        # Also clear formatting
         ss.batch_update({"requests": [{
             "repeatCell": {
                 "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1000,
@@ -122,13 +121,12 @@ class GoogleSheetsWriter:
             }
         }]})
 
-        # Brand colors
         DEEP_PURPLE = {"red": 0.176, "green": 0.106, "blue": 0.412}
         GREEN = {"red": 0.0, "green": 0.769, "blue": 0.549}
-        COL_WIDTHS = [80, 160, 240, 110, 110, 110, 110, 110]
+        # v2.1: 8 columns — Date | Order Number | Tracking | Pick&Pack fee | Packaging Type | Packaging Cost | Shipping cost | Total
+        COL_WIDTHS = [80, 160, 240, 110, 160, 110, 110, 110]
 
         reqs = []
-        # Column widths
         for i, w in enumerate(COL_WIDTHS):
             reqs.append({
                 "updateDimensionProperties": {
@@ -138,14 +136,12 @@ class GoogleSheetsWriter:
                 }
             })
 
-        # Row 1-2: Header banner (deep purple)
         reqs.append(self._make_row_height_request(sheet_id, 0, 30))
         reqs.append(self._make_row_height_request(sheet_id, 1, 30))
         reqs.append(self._make_format_request(
             sheet_id, 0, 0, 8, bg_color=DEEP_PURPLE, bold=True, font_size=14, fg_color=WHITE))
         reqs.append(self._make_format_request(
             sheet_id, 1, 0, 8, bg_color=DEEP_PURPLE, bold=True, font_size=14, fg_color=WHITE))
-        # Merge A1:B2 for FAST PREP USA
         reqs.append({
             "mergeCells": {
                 "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 2,
@@ -153,20 +149,14 @@ class GoogleSheetsWriter:
                 "mergeType": "MERGE_ALL",
             }
         })
-        # Row 3: spacer
         reqs.append(self._make_row_height_request(sheet_id, 2, 8))
-        # Row 4: column headers (purple bg)
         reqs.append(self._make_row_height_request(sheet_id, 3, 32))
         reqs.append(self._make_format_request(
             sheet_id, 3, 0, 8, bg_color=PURPLE, bold=True, font_size=11, fg_color=WHITE, h_align="CENTER"))
-
-        # Shipping Status green cell
         reqs.append(self._make_format_request(
             sheet_id, 1, 2, 3, bg_color=GREEN, bold=True, font_size=14, fg_color=WHITE, h_align="CENTER"))
-        # Balance cell
         reqs.append(self._make_format_request(
             sheet_id, 1, 3, 4, bg_color=DEEP_PURPLE, bold=True, font_size=14, fg_color=PINK, h_align="CENTER"))
-        # Payment methods row 1 E-H
         reqs.append(self._make_format_request(
             sheet_id, 0, 4, 8, bg_color=DEEP_PURPLE, font_size=10, fg_color=WHITE, h_align="CENTER"))
         reqs.append({
@@ -176,25 +166,23 @@ class GoogleSheetsWriter:
                 "mergeType": "MERGE_ALL",
             }
         })
-        # Payment email row 2 E-H
         reqs.append(self._make_format_request(
             sheet_id, 1, 4, 8, bg_color=DEEP_PURPLE, font_size=11, fg_color=PINK, h_align="CENTER"))
 
         ss.batch_update({"requests": reqs})
 
-        # Write header content
         ws.update("A1", [["FAST PREP USA"]], value_input_option="RAW")
         ws.update("C1", [["Shipping Status"]], value_input_option="RAW")
         ws.update("D1", [["Balance"]], value_input_option="RAW")
         ws.update("E1", [["Payments:  Zelle  ·  Wise  ·  Payoneer  ·  PayPal"]], value_input_option="RAW")
         ws.update("C2", [["ON"]], value_input_option="RAW")
-        # Balance formula: total deposits minus total paid from Payments tab
-        ws.update("D2", [["=SUM(Payments!B:B)-SUM(Payments!C:C)"]], value_input_option="USER_ENTERED")
+        ws.update("D2", [["=Payments!D2"]], value_input_option="USER_ENTERED")
         ws.update("E2", [["payments@fastprepusa.com"]], value_input_option="RAW")
 
-        # Column headers row 4
-        headers = ["Date", "Order Number", "Tracking number", "Storage/Returns",
-                   "Shipping cost", "Pick&Pack fee", "Package cost", "Total"]
+        # v2.1 column headers
+        headers = ["Date", "Order Number", "Tracking number",
+                   "Pick&Pack fee", "Packaging Type", "Packaging Cost",
+                   "Shipping cost", "Total"]
         ws.update("A4:H4", [headers], value_input_option="RAW")
 
         logger.info(f"AllReports tab cleared and re-initialized for {client_number} {client_name}")
@@ -259,8 +247,10 @@ class GoogleSheetsWriter:
         # Write content
         headers = ["Date", "Deposit", "Paid", "Balance", "Comments", "Customer info"]
         ws.update("A1:F1", [headers], value_input_option="RAW")
-        ws.update("B2", [["Total"]], value_input_option="RAW")
-        ws.update("D2", [["=SUM(D2:D2)"]], value_input_option="USER_ENTERED")
+        # v2.1: Total row with proper formulas
+        # Balance = Total Deposits - Total Charges
+        ws.update("A2:D2", [["Total", "=SUM(B3:B)", "=SUM(C3:C)", "=B2-C2"]],
+                  value_input_option="USER_ENTERED")
 
         logger.info(f"Payments tab cleared and re-initialized")
 
@@ -343,71 +333,38 @@ class GoogleSheetsWriter:
     # Payments tab
     # ------------------------------------------------------------------
 
-    def write_payment(self, spreadsheet_id, tab_name, date, paid_amount):
-        """Insert daily row into Payments. Always writes, even if $0."""
+    def write_payment(self, spreadsheet_id, tab_name, date, paid_amount, comment=""):
+        """
+        Append a payment row to the Payments tab.
+
+        v2.1 layout:
+          Row 1: Headers
+          Row 2: Total row (formulas: =SUM(B3:B), =SUM(C3:C), =B2-C2)
+          Row 3+: Data (auto + manual)
+
+        Always appends AFTER the last row. Does not touch manual entries.
+        Total row formulas auto-update because they use open-ended ranges.
+        """
         ss = self._open(spreadsheet_id)
         ws = self._get_ws(ss, tab_name)
         sheet_id = self._get_sheet_id(ws)
         all_values = ws.get_all_values()
-        num_cols = max(len(r) for r in all_values) if all_values else 6
+        next_row = len(all_values) + 1
 
-        total_row_idx = None
-        for i, row in enumerate(all_values):
-            if len(row) > 1 and row[1].strip().lower() == "total":
-                total_row_idx = i + 1
-            if len(row) > 0 and row[0].strip() == date:
-                # Date exists — update Paid in column C
-                ws.update_cell(i + 1, 3, paid_amount)
-                # Fix balance formula for this row (daily: deposit - paid)
-                ws.update_cell(i + 1, 4, f"=B{i+1}-C{i+1}")
-                logger.info(f"Updated Payments {date}: ${paid_amount}")
-                return True
+        # Build row: Date | Deposit (empty) | Paid | Balance (empty) | Comments | Customer info (empty)
+        row = [date, "", paid_amount, "", comment, ""]
+        ws.update(f"A{next_row}:F{next_row}", [row], value_input_option="USER_ENTERED")
 
-        if total_row_idx:
-            new_row_idx = total_row_idx  # insert before Total
-            # Balance formula: deposit - paid (daily, not running)
-            balance_formula = f"=B{new_row_idx}-C{new_row_idx}"
-
-            ws.insert_row([date, "", paid_amount, balance_formula],
-                          index=new_row_idx, value_input_option="USER_ENTERED")
-            new_total_idx = total_row_idx + 1
-
-            # Fix formatting
-            fmt_requests = []
-            fmt_requests.append(self._make_format_request(
-                sheet_id, new_row_idx - 1, 0, num_cols,
+        # Format the new row
+        fmt_requests = [
+            self._make_format_request(
+                sheet_id, next_row - 1, 0, 6,
                 bg_color=WHITE, bold=False, font_size=12,
-                fg_color=BLACK, h_align="CENTER"))
-            fmt_requests.append(self._make_row_height_request(
-                sheet_id, new_row_idx - 1, 32))
-            fmt_requests.append(self._make_format_request(
-                sheet_id, new_total_idx - 1, 0, num_cols,
-                bg_color=PINK, bold=True, font_size=15,
-                fg_color=WHITE, h_align="CENTER"))
-            fmt_requests.append(self._make_row_height_request(
-                sheet_id, new_total_idx - 1, 42))
-            fmt_requests.append({
-                "updateBorders": {
-                    "range": {
-                        "sheetId": sheet_id,
-                        "startRowIndex": new_total_idx - 1,
-                        "endRowIndex": new_total_idx,
-                        "startColumnIndex": 0,
-                        "endColumnIndex": num_cols,
-                    },
-                    "bottom": {"style": "SOLID_MEDIUM", "color": PURPLE_TEXT},
-                }
-            })
-            ss.batch_update({"requests": fmt_requests})
+                fg_color=BLACK, h_align="CENTER"),
+            self._make_row_height_request(sheet_id, next_row - 1, 32),
+        ]
+        ss.batch_update({"requests": fmt_requests})
 
-            # Update Total formula
-            self._set_total_formula(ws, new_total_idx)
-            logger.info(f"Inserted Payments {date}: ${paid_amount}")
-        else:
-            ws.append_row([date, "", paid_amount, ""], value_input_option="USER_ENTERED")
-            logger.info(f"Appended Payments {date}: ${paid_amount}")
+        comment_log = f" ({comment})" if comment else ""
+        logger.info(f"Appended Payments {date}: ${paid_amount}{comment_log}")
         return True
-
-    def _set_total_formula(self, ws, total_row):
-        data_end = total_row - 1
-        ws.update_cell(total_row, 4, f"=SUM(D2:D{data_end})")

@@ -1,4 +1,9 @@
-"""Write daily P&L data to the P&L Dashboard spreadsheet."""
+"""
+Write daily P&L data to the P&L Dashboard spreadsheet.
+
+v2: Added Packaging Profit, Shipping Profit columns.
+    Reads packaging revenue from new Packaging Cost column in AllReports.
+"""
 import json
 import logging
 from pathlib import Path
@@ -6,15 +11,18 @@ from pathlib import Path
 import gspread
 from google.oauth2.service_account import Credentials
 
+from brand_config import DEEP_PURPLE, PURPLE, WHITE
+
 logger = logging.getLogger(__name__)
 
-# Column headers for the Data tab
+# Column headers for the Data tab (v2 — expanded)
 PNL_HEADERS = [
     "Date", "Client #", "Client Name", "Orders",
-    "Storage", "Return Processing", "Pick & Pack", "Packaging Revenue",
-    "Shipping Revenue", "Return Labels",
-    "Shipping Cost", "Packaging Cost",
-    "Total Revenue", "Total Cost", "Gross Profit", "Margin %",
+    "Pick & Pack Revenue", "Storage Revenue",
+    "Return Processing", "Return Labels",
+    "Packaging Revenue", "Packaging Cost (COGS)",  "Packaging Profit",
+    "Shipping Revenue", "Shipping Cost (COGS)", "Shipping Profit",
+    "Total Revenue", "Total COGS", "Gross Profit", "Gross Margin %",
 ]
 
 # Load packaging costs mapping (box name -> cost)
@@ -29,11 +37,6 @@ if _pkg_costs_path.exists():
 def _calc_costs_from_shipments(shipments: list[dict]) -> dict:
     """
     Calculate real shipping cost and packaging cost from Shipments API data.
-
-    shipments: list of dicts with keys:
-      - order_number: str
-      - shipment_cost: float  (carrier cost)
-      - parcels: list of {box: str, tracking_number: str}
 
     Returns dict with total_shipping_cost and total_packaging_cost.
     """
@@ -73,7 +76,6 @@ def write_pnl_row(
 
     transform_result: dict from transform_bill_details()
     shipments: list from WarehanceClient.get_shipments()
-    pnl_spreadsheet_id: ID of the P&L Dashboard spreadsheet
     """
     if not pnl_spreadsheet_id:
         logger.warning("No P&L spreadsheet ID configured, skipping P&L write")
@@ -107,18 +109,18 @@ def write_pnl_row(
     for r in report_rows:
         onum = r.get("Order Number", "")
         if onum == "Storage":
-            storage = float(r["Total"])
+            storage = float(r["Total"]) if r["Total"] else 0.0
         elif onum == "Return Processing Charges":
-            return_processing = float(r["Total"])
+            return_processing = float(r["Total"]) if r["Total"] else 0.0
         elif onum == "Return Labels Charges":
-            return_labels = float(r["Total"])
+            return_labels = float(r["Total"]) if r["Total"] else 0.0
         elif onum == "Total":
             continue
         else:
             orders += 1
             s = r.get("Shipping cost", 0) or 0
             p = r.get("Pick&Pack fee", 0) or 0
-            pkg = r.get("Package cost", 0) or 0
+            pkg = r.get("Packaging Cost", 0) or 0
             shipping_rev += float(s)
             pick_pack += float(p)
             packaging_rev += float(pkg)
@@ -133,6 +135,9 @@ def write_pnl_row(
         packaging_cost = 0.0
         logger.info("No shipments data provided, costs set to $0")
 
+    # Calculated fields
+    packaging_profit = round(packaging_rev - packaging_cost, 2)
+    shipping_profit = round(shipping_rev - shipping_cost, 2)
     total_revenue = storage + return_processing + pick_pack + packaging_rev + shipping_rev + return_labels
     total_cost = shipping_cost + packaging_cost
     gross_profit = total_revenue - total_cost
@@ -143,14 +148,16 @@ def write_pnl_row(
         "'" + str(client_number),
         client_name,
         orders,
+        round(pick_pack, 2),
         round(storage, 2),
         round(return_processing, 2),
-        round(pick_pack, 2),
-        round(packaging_rev, 2),
-        round(shipping_rev, 2),
         round(return_labels, 2),
-        round(shipping_cost, 2),
+        round(packaging_rev, 2),
         round(packaging_cost, 2),
+        packaging_profit,
+        round(shipping_rev, 2),
+        round(shipping_cost, 2),
+        shipping_profit,
         round(total_revenue, 2),
         round(total_cost, 2),
         round(gross_profit, 2),
@@ -159,12 +166,12 @@ def write_pnl_row(
 
     # Duplicate protection: check if row for this date+client already exists
     existing = ws.get_all_values()
+    num_cols_letter = chr(64 + len(PNL_HEADERS))  # 18 cols = R
     for i, existing_row in enumerate(existing):
         if i == 0:
-            continue  # skip headers
+            continue
         if len(existing_row) >= 3 and existing_row[0] == date_str and existing_row[1] == str(client_number):
-            # Update existing row instead of appending
-            cell_range = f"A{i + 1}:P{i + 1}"
+            cell_range = f"A{i + 1}:{num_cols_letter}{i + 1}"
             ws.update(cell_range, [row], value_input_option="USER_ENTERED")
             logger.info(f"P&L row updated (dedup) for {client_name} on {date_str}")
             return row
@@ -184,20 +191,18 @@ def _format_headers(ss, ws):
     """Apply formatting to the header row of the Data tab."""
     sheet_id = ws.id
     requests_list = [
-        # Freeze header row
         {
             "updateSheetProperties": {
                 "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1}},
                 "fields": "gridProperties.frozenRowCount",
             }
         },
-        # Header row formatting: dark purple bg, white text, bold, centered
         {
             "repeatCell": {
                 "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1},
                 "cell": {
                     "userEnteredFormat": {
-                        "backgroundColor": {"red": 0.29, "green": 0.0, "blue": 0.51},
+                        "backgroundColor": {"red": DEEP_PURPLE["red"], "green": DEEP_PURPLE["green"], "blue": DEEP_PURPLE["blue"]},
                         "textFormat": {
                             "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
                             "bold": True,
@@ -210,7 +215,6 @@ def _format_headers(ss, ws):
                 "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)",
             }
         },
-        # Header row height
         {
             "updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
@@ -218,7 +222,6 @@ def _format_headers(ss, ws):
                 "fields": "pixelSize",
             }
         },
-        # Column widths
         *_col_width_requests(sheet_id),
     ]
     ss.batch_update({"requests": requests_list})
@@ -231,18 +234,20 @@ def _col_width_requests(sheet_id: int) -> list[dict]:
         70,   # B: Client #
         160,  # C: Client Name
         60,   # D: Orders
-        90,   # E: Storage
-        120,  # F: Return Processing
-        90,   # G: Pick & Pack
-        120,  # H: Packaging Revenue
-        120,  # I: Shipping Revenue
-        110,  # J: Return Labels
-        100,  # K: Shipping Cost
-        110,  # L: Packaging Cost
-        110,  # M: Total Revenue
-        90,   # N: Total Cost
-        100,  # O: Gross Profit
-        80,   # P: Margin %
+        110,  # E: Pick & Pack Revenue
+        100,  # F: Storage Revenue
+        120,  # G: Return Processing
+        100,  # H: Return Labels
+        120,  # I: Packaging Revenue
+        120,  # J: Packaging Cost (COGS)
+        110,  # K: Packaging Profit
+        120,  # L: Shipping Revenue
+        120,  # M: Shipping Cost (COGS)
+        110,  # N: Shipping Profit
+        110,  # O: Total Revenue
+        100,  # P: Total COGS
+        110,  # Q: Gross Profit
+        90,   # R: Gross Margin %
     ]
     reqs = []
     for i, w in enumerate(widths):
