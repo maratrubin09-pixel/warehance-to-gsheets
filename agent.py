@@ -1,14 +1,15 @@
-import requests
 #!/usr/bin/env python3
 """
 Warehance → Google Sheets Multi-Client Sync Agent
 
 Features:
+  - Auto-discovers new clients in Warehance and provisions Google Sheets
   - Fetches bill-details from Warehance API (or CSV for testing)
-  - Transforms into per-order summary (multiple parcels summed)
+  - Transforms into per-order summary with Packaging Type column
   - Writes to client's Google Sheet (AllReports + Payments tabs)
   - Detects anomalies (Package=0, Pick&Pack=0) → Telegram alerts
-  - Backs up raw data as CSV to Google Drive
+  - Writes P&L data with packaging/shipping profit breakdown
+  - Backs up raw data as CSV to Google Drive (optional)
 
 Usage:
     python agent.py                                # All clients, last 1 day
@@ -16,6 +17,8 @@ Usage:
     python agent.py --client 001                   # Only client 001
     python agent.py --csv bill.csv --client 001    # Test with CSV
     python agent.py --schedule                     # Daily daemon at 06:00 UTC
+    python agent.py --discover                     # Only run client discovery
+    python agent.py --setup-business-pnl           # Create Business P&L tab
 """
 
 import argparse
@@ -26,6 +29,7 @@ import io
 import os
 import sys
 import time
+import requests
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -34,10 +38,12 @@ from dotenv import load_dotenv
 
 from warehance_client import WarehanceClient
 from sheets_writer import GoogleSheetsWriter
-from transformer import transform_bill_details, parse_csv_file
+from transformer import transform_bill_details, parse_csv_file, PICKING_KEYWORDS, _matches_any, _safe_float, _get_category, _get_order_number
 from write_pnl import write_pnl_row, format_pnl_tab
 from telegram_notifier import TelegramNotifier
 from gdrive_backup import GDriveBackup
+from client_discovery import discover_and_provision
+from business_pnl import setup_business_pnl
 
 
 # ---------------------------------------------------------------------------
@@ -58,10 +64,12 @@ def load_config() -> dict:
         "sync_mode": os.getenv("SYNC_MODE", "append"),
         "log_level": os.getenv("LOG_LEVEL", "INFO"),
         "log_file": os.getenv("LOG_FILE", "logs/sync.log"),
+        "enable_discovery": os.getenv("ENABLE_CLIENT_DISCOVERY", "true").lower() == "true",
+        "enable_backup": os.getenv("ENABLE_GDRIVE_BACKUP", "false").lower() == "true",
     }
 
 
-def load_clients(filepath: str = "clients.json") -> list[dict]:
+def load_clients(filepath: str = "clients.json") -> tuple[list[dict], str, str]:
     path = Path(__file__).parent / filepath
     if not path.exists():
         raise FileNotFoundError(f"clients.json not found at {path}")
@@ -85,6 +93,10 @@ def validate(config: dict, clients: list[dict], use_csv: bool = False) -> list[s
         sid = c.get("spreadsheet_id", "")
         if not sid or sid.startswith("ВСТАВЬТЕ"):
             errors.append(f"Client '{c.get('name','?')}': spreadsheet_id not set")
+        if not c.get("billing_profile_id"):
+            errors.append(f"Client '{c.get('name','?')}': billing_profile_id not set")
+        if not c.get("warehance_id"):
+            errors.append(f"Client '{c.get('name','?')}': warehance_id not set")
     return errors
 
 
@@ -103,6 +115,133 @@ def setup_logging(level: str, log_file: str):
             logging.FileHandler(log_file, encoding="utf-8"),
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# Split-day pick fee helpers
+# ---------------------------------------------------------------------------
+
+def _fetch_prev_day_pick_fees(
+    client: dict,
+    config: dict,
+    target_orders: set[str],
+) -> dict[str, float]:
+    """
+    Fetch the previous day's bill for the same client to extract pick fees
+    for orders that were picked one day and shipped the next.
+
+    Returns dict mapping order_number -> pick_fee from previous day.
+    """
+    logger = logging.getLogger("split_day")
+    pacific = ZoneInfo("America/Los_Angeles")
+    now_pacific = datetime.now(pacific)
+    # Previous day = target_day - 1 (so 2 days back from now if current sync is 1 day back)
+    prev_day = (now_pacific - timedelta(days=config["days_back"] + 1)).date()
+
+    day_start_pt = datetime(prev_day.year, prev_day.month, prev_day.day, 0, 0, 0, tzinfo=pacific)
+    day_end_pt = datetime(prev_day.year, prev_day.month, prev_day.day, 23, 59, 59, tzinfo=pacific)
+    _fmt_tz = lambda dt: dt.strftime("%Y-%m-%dT%H:%M:%S") + dt.strftime("%z")[:3] + ":" + dt.strftime("%z")[3:]
+    bill_start = _fmt_tz(day_start_pt)
+    bill_end = _fmt_tz(day_end_pt)
+
+    logger.info(f"Fetching prev-day bill for {client['name']}: {prev_day} ({bill_start} — {bill_end})")
+
+    api_key = os.getenv("WAREHANCE_API_KEY")
+    headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+
+    # Create bill for previous day
+    r = requests.post("https://api.warehance.com/v1/bills", headers=headers, json={
+        "client_id": client["warehance_id"],
+        "billing_profile_id": client.get("billing_profile_id"),
+        "start_date": bill_start,
+        "end_date": bill_end,
+    }, timeout=30)
+    r.raise_for_status()
+    bill_id = r.json()["data"]["id"]
+    logger.info(f"Previous-day bill {bill_id} created")
+
+    # Wait for generation
+    h = {"X-API-Key": api_key}
+    prev_rows = []
+    for attempt in range(15):
+        try:
+            r2 = requests.get(f"https://api.warehance.com/v1/bills/{bill_id}", headers=h, timeout=30)
+            bill_data = r2.json()["data"]
+            csv_url = bill_data.get("line_item_details_csv_url", "")
+            if csv_url and bill_data.get("generation_status") == "Completed":
+                cr = requests.get(csv_url, timeout=60)
+                cr.raise_for_status()
+                reader = csv.DictReader(io.StringIO(cr.text))
+                prev_rows = list(reader)
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+
+    if not prev_rows:
+        logger.info("No rows in previous day's bill")
+        return {}
+
+    # Extract pick fees ONLY for the target orders
+    pick_fees: dict[str, float] = {}
+    for row in prev_rows:
+        order_num = _get_order_number(row)
+        if order_num not in target_orders:
+            continue
+        category = _get_category(row)
+        if _matches_any(category, PICKING_KEYWORDS):
+            amount = _safe_float(row.get("Amount", "0"))
+            pick_fees[order_num] = pick_fees.get(order_num, 0) + amount
+
+    logger.info(
+        f"Previous day: {len(prev_rows)} rows total, "
+        f"found pick fees for {len(pick_fees)}/{len(target_orders)} target orders"
+    )
+    return pick_fees
+
+
+def _merge_pick_fees(result: dict, prev_pick: dict[str, float]):
+    """
+    Merge pick fees from the previous day into the current result.
+    Updates report_rows in-place and removes resolved orders from anomalies.
+    """
+    # Update report_rows
+    for row in result["report_rows"]:
+        onum = row.get("Order Number", "")
+        if onum in prev_pick:
+            fee = round(prev_pick[onum], 2)
+            row["Pick&Pack fee"] = fee
+            # Recalculate total for this order row
+            pick = fee
+            pkg = row["Packaging Cost"] if isinstance(row["Packaging Cost"], (int, float)) else 0
+            ship = row["Shipping cost"] if isinstance(row["Shipping cost"], (int, float)) else 0
+            row["Total"] = round(pick + pkg + ship, 2)
+
+    # Recalculate grand total
+    grand_total = sum(
+        r["Total"] for r in result["report_rows"]
+        if isinstance(r["Total"], (int, float)) and r.get("Order Number") != "Total"
+    )
+    result["grand_total"] = round(grand_total, 2)
+
+    # Update Total row
+    for row in result["report_rows"]:
+        if row.get("Order Number") == "Total":
+            row["Total"] = round(grand_total, 2)
+            break
+
+    # Update payments
+    result["payments_row"]["paid"] = round(grand_total, 2)
+
+    # Remove resolved anomalies
+    resolved = set(prev_pick.keys())
+    result["anomalies"] = [
+        a for a in result["anomalies"]
+        if not (a.get("type") == "missing_pick_fee" and a.get("order_number") in resolved)
+    ]
+    result["missing_pick_orders"] = [
+        o for o in result.get("missing_pick_orders", []) if o not in resolved
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +328,7 @@ def sync_client(
         return {"client": client_name, "raw_rows": 0, "orders": 0, "total": 0}
 
     # 2. Backup raw data to Google Drive
-    if False and backup:
+    if config.get("enable_backup") and backup:
         try:
             backup.backup_rows(
                 client_number=client_number,
@@ -205,7 +344,30 @@ def sync_client(
         "check_package_cost": client.get("check_package_cost", True),
         "check_pick_fee": client.get("check_pick_fee", True),
     }
-    result = transform_bill_details(raw_rows, client_name=client_name, alert_settings=alert_settings)
+    result = transform_bill_details(
+        raw_rows, client_name=client_name,
+        client_number=client_number, alert_settings=alert_settings,
+    )
+
+    # 3a. Split-day pick fee resolution: fetch previous day's bill
+    missing_pick = result.get("missing_pick_orders", [])
+    if missing_pick and not csv_path:
+        logger.info(
+            f"{client_name}: {len(missing_pick)} orders missing pick fee — "
+            f"fetching previous day's bill for resolution"
+        )
+        try:
+            prev_pick = _fetch_prev_day_pick_fees(
+                client=client, config=config, target_orders=set(missing_pick),
+            )
+            if prev_pick:
+                logger.info(f"Resolved {len(prev_pick)} pick fees from previous day")
+                _merge_pick_fees(result, prev_pick)
+            else:
+                logger.info("No matching pick fees found in previous day's bill")
+        except Exception as e:
+            logger.warning(f"Previous-day pick fee fetch failed for {client_name}: {e}")
+
     report_rows = result["report_rows"]
     payments = result["payments_row"]
     anomalies = result["anomalies"]
@@ -227,26 +389,69 @@ def sync_client(
             spreadsheet_id=spreadsheet_id,
         )
 
-    # 5. Write AllReports tab
+    # 5. Write AllReports tab (with duplicate check)
     allreports_tab = client.get("allreports_tab", "AllReports")
     report_label = f"Report — {client_number} {client_name}"
-    gs.write_allreports(
-        spreadsheet_id=spreadsheet_id,
-        tab_name=allreports_tab,
-        records=report_rows,
-        headers=result["headers"],
-        report_date=result["report_date"],
-        report_label=report_label,
-    )
+
+    # Dedup check: see if this date already exists in AllReports
+    report_date = result["report_date"]
+    try:
+        client_ss = gs.client.open_by_key(spreadsheet_id)
+        ar_ws = client_ss.worksheet(allreports_tab)
+        existing_vals = ar_ws.get_all_values()
+        # Check if report_date already appears in the Total rows
+        date_exists = any(
+            row[0] == report_date and len(row) > 1 and row[1] == "Total"
+            for row in existing_vals
+        )
+        if date_exists:
+            logger.info(f"AllReports already has data for {report_date}, skipping write for {client_name}")
+        else:
+            gs.write_allreports(
+                spreadsheet_id=spreadsheet_id,
+                tab_name=allreports_tab,
+                records=report_rows,
+                headers=result["headers"],
+                report_date=report_date,
+                report_label=report_label,
+            )
+    except Exception as e:
+        logger.error(f"AllReports dedup check failed for {client_name}, writing anyway: {e}")
+        gs.write_allreports(
+            spreadsheet_id=spreadsheet_id,
+            tab_name=allreports_tab,
+            records=report_rows,
+            headers=result["headers"],
+            report_date=report_date,
+            report_label=report_label,
+        )
 
     # 6. Write Payments tab
     payments_tab = client.get("payments_tab", "Payments")
-    gs.write_payment(
-        spreadsheet_id=spreadsheet_id,
-        tab_name=payments_tab,
-        date=payments["date"],
-        paid_amount=payments["paid"],
-    )
+    payments_rows_list = result.get("payments_rows", [])
+
+    if payments_rows_list and client_number == "257":
+        # Client 257 (SOLMAR): write multiple payment rows with comments
+        for pr in payments_rows_list:
+            gs.write_payment(
+                spreadsheet_id=spreadsheet_id,
+                tab_name=payments_tab,
+                date=pr["date"],
+                paid_amount=pr["paid"],
+                comment=pr.get("comment", ""),
+            )
+        logger.info(
+            f"Payments: wrote {len(payments_rows_list)} lines for {client_name} "
+            f"(breakdown: {', '.join(p.get('comment','') for p in payments_rows_list)})"
+        )
+    else:
+        # Standard: single payment line
+        gs.write_payment(
+            spreadsheet_id=spreadsheet_id,
+            tab_name=payments_tab,
+            date=payments["date"],
+            paid_amount=payments["paid"],
+        )
 
     # 7. Write P&L Data
     try:
@@ -316,11 +521,31 @@ def sync_all(
         chat_id=config["telegram_chat_id"],
     )
 
+    # Auto-discover new clients before syncing
+    if config.get("enable_discovery") and not csv_path:
+        try:
+            wh = WarehanceClient(
+                api_key=config["warehance_api_key"],
+                base_url=config["warehance_base_url"],
+            )
+            new_clients = discover_and_provision(
+                wh=wh,
+                service_account_file=config["google_sa_file"],
+                dashboard_id=config.get("dashboard_spreadsheet_id", ""),
+                tg=tg,
+            )
+            if new_clients:
+                logger.info(f"Discovered {len(new_clients)} new client(s), reloading clients.json")
+                clients, _, _ = load_clients()
+        except Exception as e:
+            logger.warning(f"Client discovery failed (continuing with existing clients): {e}")
+
     backup = None
-    try:
-        backup = GDriveBackup(service_account_file=config["google_sa_file"])
-    except Exception as e:
-        logger.warning(f"Drive backup init failed: {e}")
+    if config.get("enable_backup"):
+        try:
+            backup = GDriveBackup(service_account_file=config["google_sa_file"])
+        except Exception as e:
+            logger.warning(f"Drive backup init failed: {e}")
 
     wh = None
     if not csv_path:
@@ -352,7 +577,6 @@ def sync_all(
             anom = f" | ⚠️{r.get('anomalies',0)} anomalies" if r.get("anomalies") else ""
             logger.info(f"  ✅ {r['client']}: {r.get('orders',0)} orders, ${r.get('total',0):.2f}{anom}")
 
-    # Telegram summary
     # Update Dashboard balances
     try:
         dash_id = config.get("dashboard_spreadsheet_id", "")
@@ -364,14 +588,12 @@ def sync_all(
                 if i == 0:
                     continue
                 client_num = row[1] if len(row) > 1 else ""
-                # Find matching client and get their Payments total
                 for client in clients:
                     if client["number"] == client_num:
                         try:
                             client_ss = gs.client.open_by_key(client["spreadsheet_id"])
                             pay_ws = client_ss.worksheet("Payments")
                             pay_vals = pay_ws.get_all_values()
-                            # Find Total row — last row with "Total" in column B
                             balance = ""
                             for pr in pay_vals:
                                 if len(pr) > 3 and pr[1].strip().lower() == "total":
@@ -401,7 +623,11 @@ def run_scheduled(config: dict, clients: list[dict], run_time: str = "06:00"):
 
     def job():
         try:
-            sync_all(config, clients)
+            # Reload clients each run (may have been updated by discovery)
+            fresh_clients, dash_id, pnl_id = load_clients()
+            config["dashboard_spreadsheet_id"] = dash_id
+            config["pnl_spreadsheet_id"] = pnl_id
+            sync_all(config, fresh_clients)
         except Exception as e:
             logger.error(f"Sync failed: {e}", exc_info=True)
 
@@ -425,11 +651,16 @@ def main():
     parser.add_argument("--schedule", action="store_true", help="Run as daily daemon")
     parser.add_argument("--time", default="06:00", help="HH:MM UTC (default: 06:00)")
     parser.add_argument("--days", type=int, help="Override SYNC_DAYS_BACK")
+    parser.add_argument("--discover", action="store_true", help="Only run client discovery, no sync")
+    parser.add_argument("--setup-business-pnl", action="store_true", help="Create/update Business P&L tab")
+    parser.add_argument("--no-discovery", action="store_true", help="Skip auto-discovery this run")
     args = parser.parse_args()
 
     config = load_config()
     if args.days:
         config["days_back"] = args.days
+    if args.no_discovery:
+        config["enable_discovery"] = False
 
     setup_logging(config["log_level"], config["log_file"])
     logger = logging.getLogger("main")
@@ -442,7 +673,37 @@ def main():
         logger.error(str(e))
         sys.exit(1)
 
-    # Filter by client number (e.g. --client 001)
+    # --- Discovery-only mode ---
+    if args.discover:
+        wh = WarehanceClient(
+            api_key=config["warehance_api_key"],
+            base_url=config["warehance_base_url"],
+        )
+        tg = TelegramNotifier(
+            bot_token=config["telegram_bot_token"],
+            chat_id=config["telegram_chat_id"],
+        )
+        result = discover_and_provision(
+            wh=wh,
+            service_account_file=config["google_sa_file"],
+            dashboard_id=dashboard_id,
+            tg=tg,
+        )
+        print(f"\nDiscovered {len(result)} new client(s)")
+        for c in result:
+            print(f"  {c['number']}.{c['name']} → {c['spreadsheet_id']}")
+        return
+
+    # --- Business P&L setup mode ---
+    if args.setup_business_pnl:
+        setup_business_pnl(
+            service_account_file=config["google_sa_file"],
+            pnl_spreadsheet_id=pnl_id,
+        )
+        print("Business P&L tab created/updated!")
+        return
+
+    # Filter by client number
     if args.client:
         clients = [c for c in clients if c.get("number") == args.client]
         if not clients:
