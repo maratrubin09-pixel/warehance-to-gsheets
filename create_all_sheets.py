@@ -172,8 +172,8 @@ def setup_payments(ss):
 
     headers = ["Date", "Deposit", "Paid", "Balance", "Comments", "Customer info"]
     ws.update("A1:F1", [headers], value_input_option="RAW")
-    ws.update("B2", "Total", value_input_option="RAW")
-    ws.update("D2", "=SUM(D2:D2)", value_input_option="USER_ENTERED")
+    # Total row: sums all deposits and charges, Balance = Deposits - Charges
+    ws.update("A2:D2", [["Total", '=SUM(B3:B)', '=SUM(C3:C)', '=B2-C2']], value_input_option="USER_ENTERED")
 
     return ws
 
