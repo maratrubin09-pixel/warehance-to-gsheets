@@ -248,8 +248,8 @@ class GoogleSheetsWriter:
         headers = ["Date", "Deposit", "Paid", "Balance", "Comments", "Customer info"]
         ws.update("A1:F1", [headers], value_input_option="RAW")
         # v2.1: Total row with proper formulas
-        # Balance = Total Deposits - Total Charges
-        ws.update("A2:D2", [["Total", "=SUM(B3:B)", "=SUM(C3:C)", "=B2-C2"]],
+        # Balance = sum of all individual Balance cells (each row is =B-C)
+        ws.update("A2:D2", [["Total", "=SUM(B3:B)", "=SUM(C3:C)", "=SUM(D3:D)"]],
                   value_input_option="USER_ENTERED")
 
         logger.info(f"Payments tab cleared and re-initialized")
@@ -351,8 +351,9 @@ class GoogleSheetsWriter:
         all_values = ws.get_all_values()
         next_row = len(all_values) + 1
 
-        # Build row: Date | Deposit (empty) | Paid | Balance (empty) | Comments | Customer info (empty)
-        row = [date, "", paid_amount, "", comment, ""]
+        # Build row: Date | Deposit (empty) | Paid | Balance (formula) | Comments | Customer info (empty)
+        balance_formula = f"=B{next_row}-C{next_row}"
+        row = [date, "", paid_amount, balance_formula, comment, ""]
         ws.update(f"A{next_row}:F{next_row}", [row], value_input_option="USER_ENTERED")
 
         # Format the new row
