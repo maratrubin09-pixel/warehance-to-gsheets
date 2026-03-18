@@ -176,7 +176,7 @@ class GoogleSheetsWriter:
         ws.update("D1", [["Balance"]], value_input_option="RAW")
         ws.update("E1", [["Payments:  Zelle  ·  Wise  ·  Payoneer  ·  PayPal"]], value_input_option="RAW")
         ws.update("C2", [["ON"]], value_input_option="RAW")
-        ws.update("D2", [["=Payments!D2"]], value_input_option="USER_ENTERED")
+        ws.update("D2", [["=INDEX(Payments!D:D,MATCH(\"Total\",Payments!A:A,0))"]], value_input_option="USER_ENTERED")
         ws.update("E2", [["payments@fastprepusa.com"]], value_input_option="RAW")
 
         # v2.1 column headers
@@ -188,7 +188,12 @@ class GoogleSheetsWriter:
         logger.info(f"AllReports tab cleared and re-initialized for {client_number} {client_name}")
 
     def clear_and_init_payments(self, spreadsheet_id: str, tab_name: str):
-        """Clear Payments tab and re-create the branded structure."""
+        """Clear Payments tab and re-create the branded structure.
+
+        Layout:
+          Row 1: Headers
+          Row 2: Total row (moves down as data is inserted before it)
+        """
         ss = self._open(spreadsheet_id)
         ws = self._get_ws(ss, tab_name)
         sheet_id = self._get_sheet_id(ws)
@@ -229,16 +234,16 @@ class GoogleSheetsWriter:
         reqs.append(self._make_row_height_request(sheet_id, 0, 36))
         reqs.append(self._make_format_request(
             sheet_id, 0, 0, 6, bg_color=PURPLE, bold=True, font_size=13, fg_color=WHITE, h_align="CENTER"))
-        # Row 2: Total
+        # Row 2: Total (will move down as data is inserted before it)
         reqs.append(self._make_row_height_request(sheet_id, 1, 42))
         reqs.append(self._make_format_request(
-            sheet_id, 1, 0, 6, bg_color=PINK, bold=True, font_size=15, fg_color=WHITE, h_align="CENTER"))
-        # Border under Total
+            sheet_id, 1, 0, 6, bg_color=PINK, bold=True, font_size=13, fg_color=WHITE, h_align="CENTER"))
+        # Border above Total
         reqs.append({
             "updateBorders": {
                 "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 2,
                           "startColumnIndex": 0, "endColumnIndex": 6},
-                "bottom": {"style": "SOLID_MEDIUM", "color": PURPLE_TEXT},
+                "top": {"style": "SOLID_MEDIUM", "color": PURPLE_TEXT},
             }
         })
 
@@ -247,9 +252,9 @@ class GoogleSheetsWriter:
         # Write content
         headers = ["Date", "Deposit", "Paid", "Balance", "Comments", "Customer info"]
         ws.update("A1:F1", [headers], value_input_option="RAW")
-        # v2.1: Total row with proper formulas
-        # Balance = sum of all individual Balance cells (each row is =B-C)
-        ws.update("A2:D2", [["Total", "=SUM(B3:B)", "=SUM(C3:C)", "=SUM(D3:D)"]],
+        # Total row at row 2 (will be pushed down as write_payment inserts before it)
+        # Initial formulas reference empty range — write_payment updates them
+        ws.update("A2:D2", [["Total", 0, 0, 0]],
                   value_input_option="USER_ENTERED")
 
         logger.info(f"Payments tab cleared and re-initialized")
@@ -333,39 +338,99 @@ class GoogleSheetsWriter:
     # Payments tab
     # ------------------------------------------------------------------
 
+    def _find_total_row(self, ws) -> int:
+        """Find the row number (1-based) of the Total row in Payments tab.
+
+        Searches column A for 'Total'. Returns 0 if not found.
+        """
+        col_a = ws.col_values(1)  # column A, 1-based
+        for i, val in enumerate(col_a):
+            if str(val).strip().lower() == "total":
+                return i + 1  # convert to 1-based
+        return 0
+
     def write_payment(self, spreadsheet_id, tab_name, date, paid_amount, comment=""):
         """
-        Append a payment row to the Payments tab.
+        Insert a payment row into the Payments tab, before the Total row.
 
-        v2.1 layout:
+        Layout:
           Row 1: Headers
-          Row 2: Total row (formulas: =SUM(B3:B), =SUM(C3:C), =B2-C2)
-          Row 3+: Data (auto + manual)
+          Row 2..N-1: Data (auto + manual)
+          Row N: Total row (formulas, pink background)
 
-        Always appends AFTER the last row. Does not touch manual entries.
-        Total row formulas auto-update because they use open-ended ranges.
+        New rows are inserted just before Total. Total row formulas are
+        updated to cover the full data range after each insert.
         """
         ss = self._open(spreadsheet_id)
         ws = self._get_ws(ss, tab_name)
         sheet_id = self._get_sheet_id(ws)
-        all_values = ws.get_all_values()
-        next_row = len(all_values) + 1
+
+        total_row = self._find_total_row(ws)
+        if total_row == 0:
+            # No Total row found — append at end and create Total after it
+            all_values = ws.get_all_values()
+            insert_row = len(all_values) + 1
+        else:
+            # Insert a blank row right before Total (shifts Total down by 1)
+            ss.batch_update({"requests": [{
+                "insertDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": total_row - 1,  # 0-based
+                        "endIndex": total_row,
+                    },
+                    "inheritFromBefore": False,
+                }
+            }]})
+            insert_row = total_row  # data goes where Total was; Total is now +1
 
         # Build row: Date | Deposit (empty) | Paid | Balance (formula) | Comments | Customer info (empty)
-        balance_formula = f"=B{next_row}-C{next_row}"
+        balance_formula = f"=B{insert_row}-C{insert_row}"
         row = [date, "", paid_amount, balance_formula, comment, ""]
-        ws.update(f"A{next_row}:F{next_row}", [row], value_input_option="USER_ENTERED")
+        ws.update(f"A{insert_row}:F{insert_row}", [row], value_input_option="USER_ENTERED")
 
-        # Format the new row
+        # Format the new data row
         fmt_requests = [
             self._make_format_request(
-                sheet_id, next_row - 1, 0, 6,
+                sheet_id, insert_row - 1, 0, 6,
                 bg_color=WHITE, bold=False, font_size=12,
                 fg_color=BLACK, h_align="CENTER"),
-            self._make_row_height_request(sheet_id, next_row - 1, 32),
+            self._make_row_height_request(sheet_id, insert_row - 1, 32),
         ]
         ss.batch_update({"requests": fmt_requests})
 
+        # Update Total row formulas to cover all data rows (2 to new_total_row-1)
+        new_total_row = insert_row + 1 if total_row else insert_row + 1
+        if total_row == 0:
+            # Create Total row
+            total_data = ["Total", f"=SUM(B2:B{insert_row})",
+                          f"=SUM(C2:C{insert_row})", f"=SUM(D2:D{insert_row})", "", ""]
+            ws.update(f"A{new_total_row}:F{new_total_row}", [total_data],
+                      value_input_option="USER_ENTERED")
+            # Format Total row
+            total_fmt = [
+                self._make_format_request(
+                    sheet_id, new_total_row - 1, 0, 6,
+                    bg_color=PINK, bold=True, font_size=13, fg_color=WHITE, h_align="CENTER"),
+                self._make_row_height_request(sheet_id, new_total_row - 1, 42),
+                {"updateBorders": {
+                    "range": {"sheetId": sheet_id,
+                              "startRowIndex": new_total_row - 1, "endRowIndex": new_total_row,
+                              "startColumnIndex": 0, "endColumnIndex": 6},
+                    "top": {"style": "SOLID_MEDIUM", "color": PURPLE_TEXT},
+                }},
+            ]
+            ss.batch_update({"requests": total_fmt})
+        else:
+            # Total row shifted to new_total_row — update its formulas
+            last_data_row = new_total_row - 1
+            total_formulas = ["Total", f"=SUM(B2:B{last_data_row})",
+                              f"=SUM(C2:C{last_data_row})",
+                              f"=SUM(D2:D{last_data_row})", "", ""]
+            ws.update(f"A{new_total_row}:F{new_total_row}", [total_formulas],
+                      value_input_option="USER_ENTERED")
+
         comment_log = f" ({comment})" if comment else ""
-        logger.info(f"Appended Payments {date}: ${paid_amount}{comment_log}")
+        logger.info(f"Inserted Payments {date}: ${paid_amount}{comment_log} at row {insert_row}")
         return True
