@@ -1,0 +1,300 @@
+name: Warehance Rounding Detail Analysis
+
+on:
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Run rounding analysis
+        env:
+          WAREHANCE_API_KEY: ${{ secrets.WAREHANCE_API_KEY }}
+        run: |
+          python3 - <<'PYEOF'
+import requests
+import csv
+import json
+import io
+import time
+from decimal import Decimal, ROUND_HALF_UP
+
+API_BASE = "https://api.warehance.com/v1"
+import os
+API_KEY = os.environ["WAREHANCE_API_KEY"]
+
+HEADERS = {
+    "Authorization": f"Bearer {API_KEY}",
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+}
+
+CLIENT_ID = 154
+BILLING_PROFILE_ID = 231185181547
+
+DAYS = [
+    {
+        "label": "Jan 15, 2026",
+        "start": "2026-01-15T00:00:00-07:00",
+        "end":   "2026-01-15T23:59:59-07:00",
+    },
+    {
+        "label": "Jan 16, 2026",
+        "start": "2026-01-16T00:00:00-07:00",
+        "end":   "2026-01-16T23:59:59-07:00",
+    },
+]
+
+results = {}
+
+def create_bill(start_date, end_date):
+    payload = {
+        "client_id": CLIENT_ID,
+        "billing_profile_id": BILLING_PROFILE_ID,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    resp = requests.post(f"{API_BASE}/bills", headers=HEADERS, json=payload)
+    print(f"  CREATE BILL response status: {resp.status_code}")
+    print(f"  CREATE BILL response body: {resp.text[:500]}")
+    resp.raise_for_status()
+    return resp.json()
+
+def wait_for_bill(bill_id, max_wait=120):
+    """Poll until generation_status is 'completed' or 'failed'."""
+    for attempt in range(max_wait // 5):
+        resp = requests.get(f"{API_BASE}/bills/{bill_id}", headers=HEADERS)
+        resp.raise_for_status()
+        data = resp.json()
+        status = data.get("generation_status") or data.get("status", "")
+        print(f"  Poll attempt {attempt+1}: status={status}")
+        if status in ("completed", "failed", "generated", "ready", "done"):
+            return data
+        # Also check if line items are already present (some APIs skip status field)
+        if data.get("line_item_details_csv_url") or data.get("line_items"):
+            return data
+        time.sleep(5)
+    # Return whatever we have after timeout
+    resp = requests.get(f"{API_BASE}/bills/{bill_id}", headers=HEADERS)
+    return resp.json()
+
+def analyze_day(day_info):
+    label = day_info["label"]
+    print(f"\n{'='*60}")
+    print(f"ANALYZING: {label}")
+    print(f"{'='*60}")
+
+    # 1. Create bill
+    print(f"\n--- Creating bill for {label} ---")
+    bill_create = create_bill(day_info["start"], day_info["end"])
+    print(f"Create response keys: {list(bill_create.keys())}")
+
+    # Extract bill ID (handle different response shapes)
+    bill_id = (
+        bill_create.get("id")
+        or bill_create.get("bill_id")
+        or (bill_create.get("bill") or {}).get("id")
+    )
+    if not bill_id:
+        print(f"ERROR: Could not find bill ID in response: {json.dumps(bill_create, indent=2)}")
+        return None
+
+    print(f"Bill ID: {bill_id}")
+
+    # 2. Wait for generation
+    print(f"\n--- Waiting for bill generation ---")
+    bill = wait_for_bill(bill_id)
+    print(f"\nFull bill response (truncated):")
+    bill_str = json.dumps(bill, indent=2)
+    print(bill_str[:3000])
+    if len(bill_str) > 3000:
+        print(f"... [truncated, total {len(bill_str)} chars]")
+
+    # 3. Extract summary info
+    total_amount = bill.get("total_amount")
+    csv_url = bill.get("line_item_details_csv_url")
+    line_items = bill.get("line_items", [])
+
+    print(f"\n--- BILL SUMMARY ---")
+    print(f"total_amount (from API): {total_amount}")
+    print(f"CSV URL present: {bool(csv_url)}")
+    print(f"line_items count: {len(line_items)}")
+
+    print(f"\n--- LINE ITEMS (category-level) ---")
+    for li in line_items:
+        print(f"  Category: {li.get('category') or li.get('name') or li.get('charge_rule_name', 'N/A')}")
+        print(f"    total_amount: {li.get('total_amount') or li.get('amount')}")
+        print(f"    quantity: {li.get('quantity')}")
+        print(f"    keys: {list(li.keys())}")
+
+    # 4. Download and parse CSV
+    csv_rows = []
+    if csv_url:
+        print(f"\n--- DOWNLOADING CSV ---")
+        csv_resp = requests.get(csv_url)
+        csv_resp.raise_for_status()
+        csv_content = csv_resp.text
+        print(f"CSV size: {len(csv_content)} chars")
+
+        reader = csv.DictReader(io.StringIO(csv_content))
+        for row in reader:
+            csv_rows.append(row)
+
+        print(f"CSV row count: {len(csv_rows)}")
+        if csv_rows:
+            print(f"CSV columns: {list(csv_rows[0].keys())}")
+
+        print(f"\n--- CSV ROWS (Amount | Charge Rule | Order Number) ---")
+        for i, row in enumerate(csv_rows):
+            amount = row.get("Amount") or row.get("amount") or row.get("total") or "N/A"
+            charge_rule = (
+                row.get("Charge Rule Name")
+                or row.get("charge_rule_name")
+                or row.get("ChargeRuleName")
+                or row.get("Rule")
+                or "N/A"
+            )
+            order_num = (
+                row.get("Order Number")
+                or row.get("order_number")
+                or row.get("OrderNumber")
+                or row.get("Order")
+                or "N/A"
+            )
+            print(f"  Row {i+1:3d}: Amount={amount:>12} | Rule={charge_rule[:40]:40s} | Order={order_num}")
+
+    else:
+        print("No CSV URL available in bill response.")
+
+    # 5. Rounding analysis
+    print(f"\n--- ROUNDING ANALYSIS for {label} ---")
+    if csv_rows:
+        # Identify amount column
+        amount_col = None
+        for col_name in ["Amount", "amount", "total", "Total"]:
+            if col_name in (csv_rows[0] if csv_rows else {}):
+                amount_col = col_name
+                break
+
+        if amount_col:
+            raw_amounts = []
+            for row in csv_rows:
+                val = row.get(amount_col, "0").replace(",", "").strip()
+                try:
+                    raw_amounts.append(float(val))
+                except ValueError:
+                    raw_amounts.append(0.0)
+
+            float_sum = sum(raw_amounts)
+            rounded_each_sum = sum(round(a, 2) for a in raw_amounts)
+            decimal_sum = sum(Decimal(str(a)) for a in raw_amounts)
+            decimal_rounded = float(decimal_sum.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+            print(f"  Sum of raw floats:          {float_sum:.6f}")
+            print(f"  Round(sum_of_floats, 2):    {round(float_sum, 2):.2f}")
+            print(f"  Sum of round(each, 2):      {rounded_each_sum:.2f}")
+            print(f"  Decimal sum:                {float(decimal_sum):.6f}")
+            print(f"  Decimal sum rounded to 2dp: {decimal_rounded:.2f}")
+            print(f"  Bill total_amount:          {total_amount}")
+
+            # Per-order grouping
+            order_col = None
+            for col_name in ["Order Number", "order_number", "OrderNumber", "Order"]:
+                if col_name in (csv_rows[0] if csv_rows else {}):
+                    order_col = col_name
+                    break
+
+            if order_col:
+                order_groups = {}
+                for row, amt in zip(csv_rows, raw_amounts):
+                    order = row.get(order_col, "UNKNOWN")
+                    if order not in order_groups:
+                        order_groups[order] = []
+                    order_groups[order].append(amt)
+
+                print(f"\n  Per-Order Analysis ({len(order_groups)} orders):")
+                per_order_rounded_sum = 0.0
+                per_order_raw_sum = 0.0
+                for order, amts in sorted(order_groups.items())[:20]:  # show first 20
+                    order_raw_sum = sum(amts)
+                    order_rounded = round(order_raw_sum, 2)
+                    per_order_rounded_sum += order_rounded
+                    per_order_raw_sum += order_raw_sum
+                    lines_rounded = sum(round(a, 2) for a in amts)
+                    print(f"    Order {order}: raw_sum={order_raw_sum:.6f} | round(raw_sum,2)={order_rounded:.2f} | sum(round(lines,2))={lines_rounded:.2f}")
+
+                if len(order_groups) > 20:
+                    print(f"    ... [showing first 20 of {len(order_groups)} orders]")
+                    # Still compute the full sums
+                    per_order_rounded_sum = sum(round(sum(amts), 2) for amts in order_groups.values())
+                    per_order_raw_sum = sum(sum(amts) for amts in order_groups.values())
+
+                print(f"\n  Sum of per-order-rounded amounts: {per_order_rounded_sum:.2f}")
+                print(f"  Sum of per-order-raw amounts:     {per_order_raw_sum:.6f}")
+                print(f"  Bill total_amount:                {total_amount}")
+
+                match_round_each_line = abs(rounded_each_sum - float(total_amount or 0)) < 0.005 if total_amount else None
+                match_round_at_end = abs(round(float_sum, 2) - float(total_amount or 0)) < 0.005 if total_amount else None
+                match_per_order = abs(per_order_rounded_sum - float(total_amount or 0)) < 0.005 if total_amount else None
+
+                print(f"\n  MATCH CHECK:")
+                print(f"    'Round each line first then sum' matches bill total: {match_round_each_line}")
+                print(f"    'Sum all then round once at end' matches bill total: {match_round_at_end}")
+                print(f"    'Round per order then sum' matches bill total:       {match_per_order}")
+
+    day_result = {
+        "label": label,
+        "bill_id": bill_id,
+        "total_amount": total_amount,
+        "line_items": line_items,
+        "csv_row_count": len(csv_rows),
+        "csv_rows_sample": csv_rows[:5] if csv_rows else [],
+        "analysis": {
+            "float_sum": float_sum if csv_rows and amount_col else None,
+            "round_float_sum": round(float_sum, 2) if csv_rows and amount_col else None,
+            "sum_of_rounded_lines": rounded_each_sum if csv_rows and amount_col else None,
+            "decimal_rounded": decimal_rounded if csv_rows and amount_col else None,
+        } if csv_rows else {}
+    }
+    return day_result
+
+# Main execution
+all_results = {}
+for day in DAYS:
+    try:
+        result = analyze_day(day)
+        if result:
+            all_results[day["label"]] = result
+    except Exception as e:
+        print(f"\nERROR analyzing {day['label']}: {e}")
+        import traceback
+        traceback.print_exc()
+
+print(f"\n\n{'='*60}")
+print("FINAL SUMMARY")
+print(f"{'='*60}")
+for label, result in all_results.items():
+    print(f"\n{label}:")
+    print(f"  Bill ID:      {result.get('bill_id')}")
+    print(f"  Total amount: {result.get('total_amount')}")
+    print(f"  CSV rows:     {result.get('csv_row_count')}")
+    if result.get("analysis"):
+        a = result["analysis"]
+        print(f"  Float sum:    {a.get('float_sum', 'N/A')}")
+        print(f"  Round(sum):   {a.get('round_float_sum', 'N/A')}")
+        print(f"  Sum(rounds):  {a.get('sum_of_rounded_lines', 'N/A')}")
+
+# Save JSON
+with open("rounding_results.json", "w") as f:
+    json.dump(all_results, f, indent=2, default=str)
+print("\nSaved rounding_results.json")
+PYEOF
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rounding-results
+          path: rounding_results.json
