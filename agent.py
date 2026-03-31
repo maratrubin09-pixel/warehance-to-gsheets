@@ -93,10 +93,11 @@ def validate(config: dict, clients: list[dict], use_csv: bool = False) -> list[s
         sid = c.get("spreadsheet_id", "")
         if not sid or sid.startswith("ВСТАВЬТЕ"):
             errors.append(f"Client '{c.get('name','?')}': spreadsheet_id not set")
+        # Skip warehance_id / billing_profile_id check for manual-only clients (id=0)
+        if c.get("warehance_id", 0) == 0:
+            continue
         if not c.get("billing_profile_id"):
             errors.append(f"Client '{c.get('name','?')}': billing_profile_id not set")
-        if not c.get("warehance_id"):
-            errors.append(f"Client '{c.get('name','?')}': warehance_id not set")
     return errors
 
 
@@ -672,6 +673,10 @@ def sync_all(
 
     results = []
     for client in clients:
+        # Skip manual-only clients (warehance_id=0) — they have no API data
+        if not csv_path and client.get("warehance_id", 0) == 0:
+            logger.info(f"Skipping {client.get('number','?')}.{client.get('name','?')} — manual-only client (warehance_id=0)")
+            continue
         try:
             r = sync_client(client, config, gs, tg, backup=backup, wh=wh, csv_path=csv_path)
             results.append(r)
