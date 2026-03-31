@@ -142,6 +142,28 @@
       "check_package_cost": true,
       "check_pick_fee": true,
       "billing_profile_id": 231185181454
+    },
+    {
+      "warehance_id": 0,
+      "number": "296",
+      "name": "Imanrug.com",
+      "spreadsheet_id": "1qFgCfPAg8TVBWIijR3_XR87A6k6llUqS8gluraKAGcM",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": true,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185181454
+    },
+    {
+      "warehance_id": 0,
+      "number": "297",
+      "name": "ATIQSON ENTERPRISES LTD",
+      "spreadsheet_id": "1KFd5-WPrfZCQPWSYXk4hKf9BhBuoVC3jHdzmdqJmb84",
+      "allreports_tab": "AllReports",
+      "payments_tab": "Payments",
+      "check_package_cost": true,
+      "check_pick_fee": true,
+      "billing_profile_id": 231185181454
     }
   ],
   "dashboard_spreadsheet_id": "1BLQsw4jQAlAlZl1uQ1dETORy7oSCcBW_NeNQkqozLVw",
