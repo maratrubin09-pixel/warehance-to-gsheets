@@ -15,7 +15,7 @@ API_BASE = "https://api.warehance.com/v1"
 API_KEY = os.environ["WAREHANCE_API_KEY"]
 
 HEADERS = {
-    "Authorization": f"Bearer {API_KEY}",
+    "X-API-Key": API_KEY,
     "Content-Type": "application/json",
     "Accept": "application/json",
 }
@@ -44,7 +44,7 @@ def create_bill(start_date, end_date):
         "start_date": start_date,
         "end_date": end_date,
     }
-    resp = requests.post(f"{API_BASE}/bills", headers=HEADERS, json=payload)
+    resp = requests.post(f"{API_BASE}/bills", headers=HEADERS, json=payload, timeout=30)
     print(f"  CREATE status: {resp.status_code}")
     print(f"  CREATE body: {resp.text[:500]}")
     resp.raise_for_status()
@@ -52,19 +52,24 @@ def create_bill(start_date, end_date):
 
 
 def wait_for_bill(bill_id, max_wait=120):
+    h = {"X-API-Key": API_KEY}
     for attempt in range(max_wait // 5):
-        resp = requests.get(f"{API_BASE}/bills/{bill_id}", headers=HEADERS)
+        resp = requests.get(f"{API_BASE}/bills/{bill_id}", headers=h, timeout=30)
         resp.raise_for_status()
-        data = resp.json()
-        status = data.get("generation_status") or data.get("status", "")
+        outer = resp.json()
+        # Handle nested data structure: resp["data"] or resp itself
+        data = outer.get("data") or outer
+        status = data.get("generation_status", "")
         print(f"  Poll {attempt+1}: status={status}")
-        if status in ("completed", "failed", "generated", "ready", "done"):
+        if str(status).lower() in ("completed", "failed", "generated", "ready", "done"):
             return data
-        if data.get("line_item_details_csv_url") or data.get("line_items"):
+        if data.get("line_item_details_csv_url"):
             return data
         time.sleep(5)
-    resp = requests.get(f"{API_BASE}/bills/{bill_id}", headers=HEADERS)
-    return resp.json()
+    # Return whatever we have
+    resp = requests.get(f"{API_BASE}/bills/{bill_id}", headers={"X-API-Key": API_KEY}, timeout=30)
+    outer = resp.json()
+    return outer.get("data") or outer
 
 
 def find_col(row, candidates):
@@ -81,10 +86,13 @@ def analyze_day(day_info):
     print(f"{'='*60}")
 
     bill_create = create_bill(day_info["start"], day_info["end"])
+    # Bill ID may be nested under "data"
+    outer_data = bill_create.get("data") or bill_create
     bill_id = (
-        bill_create.get("id")
+        outer_data.get("id")
+        or outer_data.get("bill_id")
+        or bill_create.get("id")
         or bill_create.get("bill_id")
-        or (bill_create.get("bill") or {}).get("id")
     )
     if not bill_id:
         print(f"ERROR: No bill ID in: {json.dumps(bill_create, indent=2)}")
@@ -93,10 +101,10 @@ def analyze_day(day_info):
 
     print(f"\n--- Waiting for generation ---")
     bill = wait_for_bill(bill_id)
-    print(f"\nBill response (first 3000 chars):")
+    print(f"\nBill data (first 4000 chars):")
     bill_str = json.dumps(bill, indent=2)
-    print(bill_str[:3000])
-    if len(bill_str) > 3000:
+    print(bill_str[:4000])
+    if len(bill_str) > 4000:
         print(f"... [truncated, total {len(bill_str)} chars]")
 
     total_amount = bill.get("total_amount")
@@ -105,7 +113,7 @@ def analyze_day(day_info):
 
     print(f"\n--- BILL SUMMARY ---")
     print(f"total_amount: {total_amount}")
-    print(f"CSV URL: {csv_url}")
+    print(f"CSV URL present: {bool(csv_url)}")
     print(f"line_items count: {len(line_items)}")
     print(f"\n--- LINE ITEMS (category summaries) ---")
     for li in line_items:
@@ -118,10 +126,11 @@ def analyze_day(day_info):
     raw_amounts = []
     amount_col = None
     order_col = None
+    rule_col = None
 
     if csv_url:
         print(f"\n--- DOWNLOADING CSV ---")
-        csv_resp = requests.get(csv_url)
+        csv_resp = requests.get(csv_url, timeout=60)
         csv_resp.raise_for_status()
         csv_content = csv_resp.text
         print(f"CSV size: {len(csv_content)} chars")
@@ -130,27 +139,29 @@ def analyze_day(day_info):
             csv_rows.append(row)
         print(f"CSV rows: {len(csv_rows)}")
         if csv_rows:
-            print(f"CSV columns: {list(csv_rows[0].keys())}")
-            amount_col = find_col(csv_rows[0], ["Amount", "amount", "Total", "total"])
-            order_col = find_col(csv_rows[0], ["Order Number", "order_number", "OrderNumber", "Order", "order"])
-            rule_col = find_col(csv_rows[0], ["Charge Rule Name", "charge_rule_name", "ChargeRuleName", "Rule", "rule"])
+            cols = list(csv_rows[0].keys())
+            print(f"CSV columns: {cols}")
+            amount_col = find_col(csv_rows[0], ["Amount", "amount", "Total", "total", "Line Amount", "line_amount"])
+            order_col = find_col(csv_rows[0], ["Order Number", "order_number", "OrderNumber", "Order", "order", "Reference", "Reference Number"])
+            rule_col = find_col(csv_rows[0], ["Charge Rule Name", "charge_rule_name", "ChargeRuleName", "Rule", "rule", "Description", "Service", "Charge"])
 
-            print(f"\n--- CSV ROWS: Amount | Rule | Order ---")
+            print(f"\n--- CSV ROWS: Amount | Charge Rule | Order ---")
             for i, row in enumerate(csv_rows):
                 a = row.get(amount_col, "N/A") if amount_col else "N/A"
-                r = row.get(rule_col, "N/A")[:40] if rule_col else "N/A"
+                r = (row.get(rule_col, "N/A") or "N/A")[:45] if rule_col else "N/A"
                 o = row.get(order_col, "N/A") if order_col else "N/A"
-                print(f"  [{i+1:3d}] Amount={a:>14} | Rule={r:40s} | Order={o}")
+                print(f"  [{i+1:3d}] Amount={str(a):>14} | Rule={str(r):45s} | Order={o}")
                 if amount_col:
                     try:
                         raw_amounts.append(float(str(a).replace(",", "").strip()))
                     except ValueError:
                         raw_amounts.append(0.0)
     else:
-        print("No CSV URL available.")
+        print("No CSV URL available. Full bill JSON:")
+        print(json.dumps(bill, indent=2))
 
     # --- ROUNDING ANALYSIS ---
-    print(f"\n--- ROUNDING ANALYSIS ---")
+    print(f"\n--- ROUNDING ANALYSIS for {label} ---")
     analysis = {}
     if raw_amounts:
         float_sum = sum(raw_amounts)
@@ -183,9 +194,9 @@ def analyze_day(day_info):
             m1 = abs(round(float_sum, 2) - bill_total) < 0.005
             m2 = abs(sum_rounded_each - bill_total) < 0.005
             m3 = abs(decimal_rounded - bill_total) < 0.005
-            print(f"\n  MATCH: 'round whole sum at end'     => {m1}")
-            print(f"  MATCH: 'sum of individually rounded' => {m2}")
-            print(f"  MATCH: 'decimal sum rounded'          => {m3}")
+            print(f"\n  MATCH: 'round whole sum at end'      = {m1}")
+            print(f"  MATCH: 'sum of individually rounded' = {m2}")
+            print(f"  MATCH: 'decimal sum rounded'         = {m3}")
             analysis.update({"match_round_at_end": m1, "match_sum_rounded_lines": m2, "match_decimal": m3})
 
         # Per-order analysis
@@ -212,20 +223,23 @@ def analyze_day(day_info):
                     "diff": diff,
                 })
                 if len(order_details) <= 30:
-                    print(f"    Order {order}: raw={order_raw:.6f} | round(raw)={order_r:.2f} | sum(round_lines)={lines_r:.2f} | diff={diff:.4f}")
+                    print(f"    Order {str(order):20s}: raw={order_raw:.6f} | round(raw)={order_r:.2f} | sum(round_lines)={lines_r:.2f} | diff={diff:+.4f}")
             if len(order_details) > 30:
-                print(f"    ... [{len(order_details) - 30} more orders not shown]")
+                print(f"    ... [{len(order_details) - 30} more orders not shown above]")
+                # Recompute full sum
+                per_order_rounded_sum = sum(d["round_raw_sum"] for d in order_details)
 
             print(f"\n  Sum of per-order-rounded:        {per_order_rounded_sum:.2f}")
             print(f"  Bill total_amount:               {total_amount}")
             if bill_total is not None:
                 m4 = abs(per_order_rounded_sum - bill_total) < 0.005
-                print(f"  MATCH: 'round per-order then sum' => {m4}")
+                print(f"  MATCH: 'round per-order then sum' = {m4}")
                 analysis["match_per_order_rounded"] = m4
                 analysis["per_order_rounded_sum"] = per_order_rounded_sum
-            analysis["order_details"] = order_details
+            analysis["order_count"] = len(order_groups)
+            analysis["order_details"] = order_details[:50]  # save up to 50
     else:
-        print("  No amount data to analyze.")
+        print("  No amount data to analyze (no CSV or no amount column).")
 
     return {
         "label": label,
@@ -259,11 +273,13 @@ for label, r in all_results.items():
     print(f"  CSV rows:      {r.get('csv_row_count')}")
     a = r.get("analysis", {})
     if a:
-        print(f"  Float sum:     {a.get('float_sum', 'N/A'):.6f}" if isinstance(a.get('float_sum'), float) else f"  Float sum:     N/A")
+        fs = a.get('float_sum')
+        print(f"  Float sum:     {fs:.6f}" if isinstance(fs, float) else f"  Float sum:     N/A")
         print(f"  Round(sum):    {a.get('round_float_sum', 'N/A')}")
         print(f"  Sum(rounds):   {a.get('sum_rounded_each_line', 'N/A')}")
         print(f"  Match round-at-end:    {a.get('match_round_at_end', 'N/A')}")
         print(f"  Match sum-rounds:      {a.get('match_sum_rounded_lines', 'N/A')}")
+        print(f"  Match decimal:         {a.get('match_decimal', 'N/A')}")
         print(f"  Match per-order:       {a.get('match_per_order_rounded', 'N/A')}")
 
 with open("rounding_results.json", "w") as f:
