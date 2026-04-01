@@ -20,7 +20,7 @@ HEADERS = {
     "Accept": "application/json",
 }
 
-CLIENT_ID = 154
+CLIENT_ID = 231185181634  # warehance_id for Liza Herman (internal number is 154)
 BILLING_PROFILE_ID = 231185181547
 
 DAYS = [
