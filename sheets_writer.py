@@ -388,10 +388,22 @@ class GoogleSheetsWriter:
 
         New rows are inserted just before Total. Total row formulas are
         updated to cover the full data range after each insert.
+        Duplicate check: skips if date+comment already exists.
         """
         ss = self._open(spreadsheet_id)
         ws = self._get_ws(ss, tab_name)
         sheet_id = self._get_sheet_id(ws)
+
+        # --- Dedup check: skip if date+comment already present ---
+        all_vals = ws.get_all_values()
+        for row in all_vals:
+            row_date = str(row[0]).strip() if len(row) > 0 else ""
+            row_comment = str(row[4]).strip() if len(row) > 4 else ""
+            if row_date == str(date).strip() and row_comment == str(comment).strip():
+                # Skip if same date and same comment (handles SOLMAR multi-line)
+                if row_date.lower() != "total" and row_date.lower() != "date":
+                    logger.info(f"Payments dedup: {date} ({comment}) already exists, skipping")
+                    return True
 
         total_row = self._find_total_row(ws)
         if total_row == 0:
