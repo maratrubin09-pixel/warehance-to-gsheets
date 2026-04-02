@@ -290,6 +290,34 @@ class GoogleSheetsWriter:
             else:
                 row_types.append("data")
             rows.append(row)
+
+        # --- Replace hardcoded totals with formulas ---
+        # start_row is 0-based index of the first new row in the sheet.
+        # Excel/Sheets row numbers are 1-based, so first new row = start_row + 1.
+        first_data_row = None   # 1-based row of first order/summary line (after report_header)
+        last_data_row = None    # 1-based row of last order/summary line (before Total)
+
+        for i, row_type in enumerate(row_types):
+            abs_row_1based = start_row + i + 1  # 1-based sheet row number
+            if row_type == "data":
+                # Order row: Total = Pick&Pack fee + Packaging Cost + Shipping cost
+                # Columns: D=Pick&Pack, F=Packaging Cost, G=Shipping cost, H=Total
+                rows[i][7] = f"=D{abs_row_1based}+F{abs_row_1based}+G{abs_row_1based}"
+                if first_data_row is None:
+                    first_data_row = abs_row_1based
+                last_data_row = abs_row_1based
+            elif row_type == "summary":
+                # Storage / Return rows: Total = Shipping cost column
+                rows[i][7] = f"=G{abs_row_1based}"
+                if first_data_row is None:
+                    first_data_row = abs_row_1based
+                last_data_row = abs_row_1based
+            elif row_type == "total":
+                # Daily Total row: sum of all H cells for this day's data
+                if first_data_row and last_data_row:
+                    rows[i][7] = f"=SUM(H{first_data_row}:H{last_data_row})"
+                # else: keep the numeric value as fallback
+
         ws.append_rows(rows, value_input_option="USER_ENTERED")
         num_cols = len(headers)
         fmt_requests = []
