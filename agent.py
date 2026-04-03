@@ -703,16 +703,20 @@ def sync_all(
             dash_ws = dash_ss.worksheet("Clients")
             dash_vals = dash_ws.get_all_values()
 
-            # Build set of client numbers already in Dashboard
+            def _norm_num(s):
+                """Normalize client number: strip whitespace & leading zeros."""
+                return s.strip().lstrip("0") or "0"
+
+            # Build set of normalized client numbers already in Dashboard
             dash_client_nums = set()
             for i, row in enumerate(dash_vals):
                 if i == 0:
                     continue
                 client_num = row[1].strip() if len(row) > 1 else ""
                 if client_num:
-                    dash_client_nums.add(client_num)
+                    dash_client_nums.add(_norm_num(client_num))
                 for client in clients:
-                    if client["number"] == client_num:
+                    if _norm_num(client["number"]) == _norm_num(client_num):
                         try:
                             client_ss = gs.client.open_by_key(client["spreadsheet_id"])
                             pay_ws = client_ss.worksheet("Payments")
@@ -729,7 +733,7 @@ def sync_all(
             # Add missing clients to Dashboard
             next_row = len(dash_vals) + 1
             for client in clients:
-                if client["number"] not in dash_client_nums:
+                if _norm_num(client["number"]) not in dash_client_nums:
                     try:
                         sid = client["spreadsheet_id"]
                         url = f"https://docs.google.com/spreadsheets/d/{sid}/edit"
