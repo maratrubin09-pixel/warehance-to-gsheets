@@ -702,10 +702,15 @@ def sync_all(
             dash_ss = gs.client.open_by_key(dash_id)
             dash_ws = dash_ss.worksheet("Clients")
             dash_vals = dash_ws.get_all_values()
+
+            # Build set of client numbers already in Dashboard
+            dash_client_nums = set()
             for i, row in enumerate(dash_vals):
                 if i == 0:
                     continue
-                client_num = row[1] if len(row) > 1 else ""
+                client_num = row[1].strip() if len(row) > 1 else ""
+                if client_num:
+                    dash_client_nums.add(client_num)
                 for client in clients:
                     if client["number"] == client_num:
                         try:
@@ -714,12 +719,35 @@ def sync_all(
                             pay_vals = pay_ws.get_all_values()
                             balance = ""
                             for pr in pay_vals:
-                                if len(pr) > 3 and pr[1].strip().lower() == "total":
+                                if len(pr) > 3 and pr[0].strip().lower() == "total":
                                     balance = pr[3]
                             dash_ws.update_cell(i + 1, 5, balance)
                         except Exception as e:
                             logger.warning(f"Dashboard balance error for {client_num}: {e}")
                         break
+
+            # Add missing clients to Dashboard
+            next_row = len(dash_vals) + 1
+            for client in clients:
+                if client["number"] not in dash_client_nums:
+                    try:
+                        sid = client["spreadsheet_id"]
+                        url = f"https://docs.google.com/spreadsheets/d/{sid}/edit"
+                        # Read balance from the client's Payments tab
+                        client_ss = gs.client.open_by_key(sid)
+                        pay_ws = client_ss.worksheet("Payments")
+                        pay_vals = pay_ws.get_all_values()
+                        balance = ""
+                        for pr in pay_vals:
+                            if len(pr) > 3 and pr[0].strip().lower() == "total":
+                                balance = pr[3]
+                        row_data = [next_row - 1, client["number"], client["name"], url, balance]
+                        dash_ws.update(f"A{next_row}:E{next_row}", [row_data], value_input_option="USER_ENTERED")
+                        logger.info(f"Dashboard: added missing client {client['number']}.{client['name']}")
+                        next_row += 1
+                    except Exception as e:
+                        logger.warning(f"Dashboard add client {client['number']} failed: {e}")
+
             logger.info("Dashboard balances updated")
     except Exception as e:
         logger.warning(f"Dashboard update failed: {e}")
