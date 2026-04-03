@@ -13,9 +13,12 @@ jobs:
           python-version: '3.13'
       - run: pip install -r requirements.txt
 
+      - name: Write service account key
+        run: |
+          mkdir -p config
+          echo '${{ secrets.GOOGLE_SA_KEY }}' > config/service_account.json
+
       - name: List and clean SA Drive files
-        env:
-          WAREHANCE_API_KEY: ${{ secrets.WAREHANCE_API_KEY }}
         run: |
           python3 << 'SCRIPT'
           import gspread
