@@ -366,16 +366,45 @@ class GoogleSheetsWriter:
     # Payments tab
     # ------------------------------------------------------------------
 
-    def _find_total_row(self, ws) -> int:
+    def _find_total_row(self, ws, ss=None) -> int:
         """Find the row number (1-based) of the Total row in Payments tab.
 
-        Searches column A for 'Total'. Returns 0 if not found.
+        Searches columns A and B for 'Total'. If multiple Total rows exist,
+        deletes the extras (keeps only the last one) and returns its position.
+        Returns 0 if not found.
         """
-        col_a = ws.col_values(1)  # column A, 1-based
-        for i, val in enumerate(col_a):
-            if str(val).strip().lower() == "total":
-                return i + 1  # convert to 1-based
-        return 0
+        all_vals = ws.get_all_values()
+        total_rows = []  # list of 1-based row numbers
+        for i, row in enumerate(all_vals):
+            cell_a = str(row[0]).strip().lower() if len(row) > 0 else ""
+            cell_b = str(row[1]).strip().lower() if len(row) > 1 else ""
+            if cell_a == "total" or cell_b == "total":
+                total_rows.append(i + 1)  # 1-based
+
+        if not total_rows:
+            return 0
+
+        if len(total_rows) > 1 and ss is not None:
+            # Multiple Total rows found — delete all except the last one
+            sheet_id = self._get_sheet_id(ws)
+            # Delete from bottom to top to preserve row indices
+            for tr in reversed(total_rows[:-1]):
+                logger.warning(f"Payments: deleting extra Total row at {tr}")
+                ss.batch_update({"requests": [{
+                    "deleteDimension": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": tr - 1,  # 0-based
+                            "endIndex": tr,
+                        }
+                    }
+                }]})
+            # Recalculate last Total position after deletions
+            deleted_before_last = sum(1 for tr in total_rows[:-1] if tr < total_rows[-1])
+            return total_rows[-1] - deleted_before_last
+
+        return total_rows[-1]
 
     def write_payment(self, spreadsheet_id, tab_name, date, paid_amount, comment=""):
         """
@@ -405,7 +434,7 @@ class GoogleSheetsWriter:
                     logger.info(f"Payments dedup: {date} ({comment}) already exists, skipping")
                     return True
 
-        total_row = self._find_total_row(ws)
+        total_row = self._find_total_row(ws, ss=ss)
         if total_row == 0:
             # No Total row found — append at end and create Total after it
             all_values = ws.get_all_values()
@@ -445,7 +474,7 @@ class GoogleSheetsWriter:
         if total_row == 0:
             # Create Total row
             total_data = ["Total", f"=SUM(B2:B{insert_row})",
-                          f"=SUM(C2:C{insert_row})", f"=SUM(D2:D{insert_row})", "", ""]
+                          f"=SUM(C2:C{insert_row})", f"=B{new_total_row}-C{new_total_row}", "", ""]
             ws.update(f"A{new_total_row}:F{new_total_row}", [total_data],
                       value_input_option="USER_ENTERED")
             # Format Total row
@@ -467,7 +496,7 @@ class GoogleSheetsWriter:
             last_data_row = new_total_row - 1
             total_formulas = ["Total", f"=SUM(B2:B{last_data_row})",
                               f"=SUM(C2:C{last_data_row})",
-                              f"=SUM(D2:D{last_data_row})", "", ""]
+                              f"=B{new_total_row}-C{new_total_row}", "", ""]
             ws.update(f"A{new_total_row}:F{new_total_row}", [total_formulas],
                       value_input_option="USER_ENTERED")
 
