@@ -253,8 +253,8 @@ class GoogleSheetsWriter:
         headers = ["Date", "Deposit", "Paid", "Balance", "Comments", "Customer info"]
         ws.update("A1:F1", [headers], value_input_option="RAW")
         # Total row at row 2 (will be pushed down as write_payment inserts before it)
-        # Initial formulas reference empty range — write_payment updates them
-        ws.update("A2:D2", [["Total", 0, 0, 0]],
+        # Only Balance column gets a formula — Deposit and Paid stay empty
+        ws.update("A2:F2", [["Total", "", "", 0, "", ""]],
                   value_input_option="USER_ENTERED")
 
         logger.info(f"Payments tab cleared and re-initialized")
@@ -472,9 +472,10 @@ class GoogleSheetsWriter:
         # Update Total row formulas to cover all data rows (2 to new_total_row-1)
         new_total_row = insert_row + 1 if total_row else insert_row + 1
         if total_row == 0:
-            # Create Total row
-            total_data = ["Total", f"=SUM(B2:B{insert_row})",
-                          f"=SUM(C2:C{insert_row})", f"=B{new_total_row}-C{new_total_row}", "", ""]
+            # Create Total row — only Balance column gets a formula
+            last_data_row = insert_row
+            total_data = ["Total", "", "",
+                          f"=SUM(D2:D{last_data_row})", "", ""]
             ws.update(f"A{new_total_row}:F{new_total_row}", [total_data],
                       value_input_option="USER_ENTERED")
             # Format Total row
@@ -492,11 +493,10 @@ class GoogleSheetsWriter:
             ]
             ss.batch_update({"requests": total_fmt})
         else:
-            # Total row shifted to new_total_row — update its formulas
+            # Total row shifted to new_total_row — update Balance formula only
             last_data_row = new_total_row - 1
-            total_formulas = ["Total", f"=SUM(B2:B{last_data_row})",
-                              f"=SUM(C2:C{last_data_row})",
-                              f"=B{new_total_row}-C{new_total_row}", "", ""]
+            total_formulas = ["Total", "", "",
+                              f"=SUM(D2:D{last_data_row})", "", ""]
             ws.update(f"A{new_total_row}:F{new_total_row}", [total_formulas],
                       value_input_option="USER_ENTERED")
 
