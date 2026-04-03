@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 # Column order for AllReports
 ALLREPORTS_HEADERS = [
-    "Date", "Order Number", "Tracking number",
-    "Pick&Pack fee", "Packaging Type", "Packaging Cost",
-    "Shipping cost", "Total",
+    "Date", "Order Number", "_spacer", "Tracking number",
+    "Storage/Returns", "Shipping cost", "FBM fee",
+    "Package cost", "Total",
 ]
 
 # Category mapping — handles both formats
@@ -288,31 +288,32 @@ def transform_bill_details(
         report_rows.append({
             "Date": _format_date_short(entry["date"]),
             "Order Number": entry["order_number"],
+            "_spacer": "",
             "Tracking number": entry["tracking"],
-            "Pick&Pack fee": round(entry["pick_fee"], 2) if entry["pick_fee"] else "",
-            "Packaging Type": entry["packaging_type"],
-            "Packaging Cost": round(entry["package_cost"], 2) if entry["package_cost"] else "",
+            "Storage/Returns": "",
             "Shipping cost": round(entry["shipping_cost"], 2) if entry["shipping_cost"] else "",
+            "FBM fee": round(entry["pick_fee"], 2) if entry["pick_fee"] else "",
+            "Package cost": round(entry["package_cost"], 2) if entry["package_cost"] else "",
             "Total": round(total, 2),
         })
 
     # Summary rows (daily charges)
     report_rows.append({
-        "Date": "", "Order Number": "Storage", "Tracking number": "",
-        "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "",
-        "Shipping cost": round(storage_total, 2) if storage_total else "",
+        "Date": "", "Order Number": "Storage", "_spacer": "",
+        "Tracking number": "", "Storage/Returns": round(storage_total, 2) if storage_total else "",
+        "Shipping cost": "", "FBM fee": "", "Package cost": "",
         "Total": round(storage_total, 2),
     })
     report_rows.append({
-        "Date": "", "Order Number": "Return Processing Charges", "Tracking number": "",
-        "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "",
-        "Shipping cost": round(return_processing_total, 2) if return_processing_total else "",
+        "Date": "", "Order Number": "Return Processing Charges", "_spacer": "",
+        "Tracking number": "", "Storage/Returns": round(return_processing_total, 2) if return_processing_total else "",
+        "Shipping cost": "", "FBM fee": "", "Package cost": "",
         "Total": round(return_processing_total, 2),
     })
     report_rows.append({
-        "Date": "", "Order Number": "Return Labels Charges", "Tracking number": "",
-        "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "",
-        "Shipping cost": round(return_labels_total, 2) if return_labels_total else "",
+        "Date": "", "Order Number": "Return Labels Charges", "_spacer": "",
+        "Tracking number": "", "Storage/Returns": round(return_labels_total, 2) if return_labels_total else "",
+        "Shipping cost": "", "FBM fee": "", "Package cost": "",
         "Total": round(return_labels_total, 2),
     })
 
@@ -321,8 +322,8 @@ def transform_bill_details(
     )
     report_rows.append({
         "Date": _format_date_full(first_date), "Order Number": "Total",
-        "Tracking number": "", "Pick&Pack fee": "", "Packaging Type": "",
-        "Packaging Cost": "", "Shipping cost": "",
+        "_spacer": "", "Tracking number": "", "Storage/Returns": "",
+        "Shipping cost": "", "FBM fee": "", "Package cost": "",
         "Total": round(grand_total, 2),
     })
 

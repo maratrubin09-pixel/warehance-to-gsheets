@@ -211,10 +211,10 @@ def _merge_pick_fees(result: dict, prev_pick: dict[str, float]):
         onum = row.get("Order Number", "")
         if onum in prev_pick:
             fee = round(prev_pick[onum], 2)
-            row["Pick&Pack fee"] = fee
+            row["FBM fee"] = fee
             # Recalculate total for this order row
             pick = fee
-            pkg = row["Packaging Cost"] if isinstance(row["Packaging Cost"], (int, float)) else 0
+            pkg = row["Package cost"] if isinstance(row["Package cost"], (int, float)) else 0
             ship = row["Shipping cost"] if isinstance(row["Shipping cost"], (int, float)) else 0
             row["Total"] = round(pick + pkg + ship, 2)
 
@@ -335,18 +335,18 @@ def sync_client(
         zero_date_pay = target_day.strftime("%m/%d/%y")      # Payments format
 
         report_rows = [
-            {"Date": "", "Order Number": "Storage", "Tracking number": "",
-             "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "",
-             "Shipping cost": "0", "Total": 0},
-            {"Date": "", "Order Number": "Return Processing Charges", "Tracking number": "",
-             "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "",
-             "Shipping cost": "0", "Total": 0},
-            {"Date": "", "Order Number": "Return Labels Charges", "Tracking number": "",
-             "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "",
-             "Shipping cost": "0", "Total": 0},
-            {"Date": zero_date_full, "Order Number": "Total", "Tracking number": "",
-             "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "",
-             "Shipping cost": "", "Total": 0},
+            {"Date": "", "Order Number": "Storage", "_spacer": "",
+             "Tracking number": "", "Storage/Returns": 0, "Shipping cost": "",
+             "FBM fee": "", "Package cost": "", "Total": 0},
+            {"Date": "", "Order Number": "Return Processing Charges", "_spacer": "",
+             "Tracking number": "", "Storage/Returns": 0, "Shipping cost": "",
+             "FBM fee": "", "Package cost": "", "Total": 0},
+            {"Date": "", "Order Number": "Return Labels Charges", "_spacer": "",
+             "Tracking number": "", "Storage/Returns": 0, "Shipping cost": "",
+             "FBM fee": "", "Package cost": "", "Total": 0},
+            {"Date": zero_date_full, "Order Number": "Total", "_spacer": "",
+             "Tracking number": "", "Storage/Returns": "", "Shipping cost": "",
+             "FBM fee": "", "Package cost": "", "Total": 0},
         ]
         from transformer import ALLREPORTS_HEADERS
         result = {

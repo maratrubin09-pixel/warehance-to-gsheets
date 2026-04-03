@@ -123,8 +123,8 @@ class GoogleSheetsWriter:
 
         DEEP_PURPLE = {"red": 0.176, "green": 0.106, "blue": 0.412}
         GREEN = {"red": 0.0, "green": 0.769, "blue": 0.549}
-        # v2.1: 8 columns — Date | Order Number | Tracking | Pick&Pack fee | Packaging Type | Packaging Cost | Shipping cost | Total
-        COL_WIDTHS = [80, 160, 240, 110, 160, 110, 110, 110]
+        # v3: 9 columns — Date | Order Number | (spacer) | Tracking | Storage/Returns | Shipping cost | FBM fee | Package cost | Total
+        COL_WIDTHS = [80, 160, 40, 240, 110, 110, 110, 110, 110]
 
         reqs = []
         for i, w in enumerate(COL_WIDTHS):
@@ -179,11 +179,11 @@ class GoogleSheetsWriter:
         ws.update("D2", [["=INDEX(Payments!D:D,MATCH(\"Total\",Payments!A:A,0))"]], value_input_option="USER_ENTERED")
         ws.update("E2", [["payments@fastprepusa.com"]], value_input_option="RAW")
 
-        # v2.1 column headers
-        headers = ["Date", "Order Number", "Tracking number",
-                   "Pick&Pack fee", "Packaging Type", "Packaging Cost",
-                   "Shipping cost", "Total"]
-        ws.update("A4:H4", [headers], value_input_option="RAW")
+        # v3 column headers (9-col Sarmali format)
+        headers = ["Date", "Order Number", "", "Tracking number",
+                   "Storage/Returns", "Shipping cost", "FBM fee",
+                   "Package cost", "Total"]
+        ws.update("A4:I4", [headers], value_input_option="RAW")
 
         logger.info(f"AllReports tab cleared and re-initialized for {client_number} {client_name}")
 
@@ -300,22 +300,22 @@ class GoogleSheetsWriter:
         for i, row_type in enumerate(row_types):
             abs_row_1based = start_row + i + 1  # 1-based sheet row number
             if row_type == "data":
-                # Order row: Total = Pick&Pack fee + Packaging Cost + Shipping cost
-                # Columns: D=Pick&Pack, F=Packaging Cost, G=Shipping cost, H=Total
-                rows[i][7] = f"=D{abs_row_1based}+F{abs_row_1based}+G{abs_row_1based}"
+                # Order row: Total = Shipping(F) + FBM fee(G) + Package cost(H)
+                # New 9-col layout: F=Shipping, G=FBM fee, H=Pkg cost, I=Total
+                rows[i][8] = f"=F{abs_row_1based}+G{abs_row_1based}+H{abs_row_1based}"
                 if first_data_row is None:
                     first_data_row = abs_row_1based
                 last_data_row = abs_row_1based
             elif row_type == "summary":
-                # Storage / Return rows: Total = Shipping cost column
-                rows[i][7] = f"=G{abs_row_1based}"
+                # Storage / Return rows: Total = Storage/Returns column (E)
+                rows[i][8] = f"=E{abs_row_1based}"
                 if first_data_row is None:
                     first_data_row = abs_row_1based
                 last_data_row = abs_row_1based
             elif row_type == "total":
-                # Daily Total row: sum of all H cells for this day's data
+                # Daily Total row: sum of all I cells for this day's data
                 if first_data_row and last_data_row:
-                    rows[i][7] = f"=SUM(H{first_data_row}:H{last_data_row})"
+                    rows[i][8] = f"=SUM(I{first_data_row}:I{last_data_row})"
                 # else: keep the numeric value as fallback
 
         ws.append_rows(rows, value_input_option="USER_ENTERED")
@@ -454,9 +454,11 @@ class GoogleSheetsWriter:
             }]})
             insert_row = total_row  # data goes where Total was; Total is now +1
 
-        # Build row: Date | Deposit (empty) | Paid | Balance (formula) | Comments | Customer info (empty)
+        # Build row: Date | Deposit (empty) | Paid (SUMIFS) | Balance (formula) | Comments | Customer info (empty)
+        # Paid column uses SUMIFS to pull total from AllReports for matching date
+        paid_formula = f'=SUMIFS(AllReports!I$5:I$1000,AllReports!A$5:A$1000,A{insert_row},AllReports!B$5:B$1000,"Total")'
         balance_formula = f"=B{insert_row}-C{insert_row}"
-        row = [date, "", paid_amount, balance_formula, comment, ""]
+        row = [date, "", paid_formula, balance_formula, comment, ""]
         ws.update(f"A{insert_row}:F{insert_row}", [row], value_input_option="USER_ENTERED")
 
         # Format the new data row

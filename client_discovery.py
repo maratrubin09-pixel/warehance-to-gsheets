@@ -39,11 +39,11 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-# AllReports headers (new structure with Packaging Type)
+# AllReports headers (9-col Sarmali format)
 ALLREPORTS_HEADERS = [
-    "Date", "Order Number", "Tracking number",
-    "Pick&Pack fee", "Packaging Type", "Packaging Cost",
-    "Shipping cost", "Total",
+    "Date", "Order Number", "", "Tracking number",
+    "Storage/Returns", "Shipping cost", "FBM fee",
+    "Package cost", "Total",
 ]
 
 PAYMENTS_HEADERS = ["Date", "Deposit", "Paid", "Balance", "Comments", "Customer info"]

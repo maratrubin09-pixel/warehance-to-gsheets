@@ -115,8 +115,8 @@ def write_pnl_row(
         else:
             orders += 1
             s = r.get("Shipping cost", 0) or 0
-            p = r.get("Pick&Pack fee", 0) or 0
-            pkg = r.get("Packaging Cost", 0) or 0
+            p = r.get("FBM fee", 0) or r.get("Pick&Pack fee", 0) or 0
+            pkg = r.get("Package cost", 0) or r.get("Packaging Cost", 0) or 0
             shipping_rev += float(s)
             pick_pack += float(p)
             packaging_rev += float(pkg)

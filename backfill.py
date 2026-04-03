@@ -178,10 +178,10 @@ def main():
             from transformer import ALLREPORTS_HEADERS
             zero_date = day_date.strftime("%m.%d.%Y")
             zero_rows = [
-                {"Date": "", "Order Number": "Storage", "Tracking number": "", "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "", "Shipping cost": 0, "Total": 0},
-                {"Date": "", "Order Number": "Return Processing Charges", "Tracking number": "", "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "", "Shipping cost": 0, "Total": 0},
-                {"Date": "", "Order Number": "Return Labels Charges", "Tracking number": "", "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "", "Shipping cost": 0, "Total": 0},
-                {"Date": zero_date, "Order Number": "Total", "Tracking number": "", "Pick&Pack fee": "", "Packaging Type": "", "Packaging Cost": "", "Shipping cost": "", "Total": 0},
+                {"Date": "", "Order Number": "Storage", "_spacer": "", "Tracking number": "", "Storage/Returns": 0, "Shipping cost": "", "FBM fee": "", "Package cost": "", "Total": 0},
+                {"Date": "", "Order Number": "Return Processing Charges", "_spacer": "", "Tracking number": "", "Storage/Returns": 0, "Shipping cost": "", "FBM fee": "", "Package cost": "", "Total": 0},
+                {"Date": "", "Order Number": "Return Labels Charges", "_spacer": "", "Tracking number": "", "Storage/Returns": 0, "Shipping cost": "", "FBM fee": "", "Package cost": "", "Total": 0},
+                {"Date": zero_date, "Order Number": "Total", "_spacer": "", "Tracking number": "", "Storage/Returns": "", "Shipping cost": "", "FBM fee": "", "Package cost": "", "Total": 0},
             ]
             try:
                 report_label = f"Report — {client_num} {client_name}"
