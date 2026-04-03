@@ -749,6 +749,33 @@ def sync_all(
                         logger.warning(f"Dashboard add client {client['number']} failed: {e}")
 
             logger.info("Dashboard balances updated")
+
+            # Send balances list to Telegram
+            try:
+                dash_vals_updated = dash_ws.get_all_values()
+                balance_lines = ["<b>💰 Балансы клиентов</b>", ""]
+                total_balance = 0.0
+                for row in dash_vals_updated[1:]:  # skip header
+                    if len(row) >= 5 and row[1].strip():
+                        client_num = row[1].strip()
+                        client_name = row[2].strip() if len(row) > 2 else ""
+                        bal_str = row[4].strip() if len(row) > 4 else ""
+                        if bal_str:
+                            try:
+                                bal_val = float(bal_str.replace(",", "").replace("$", "").replace(" ", ""))
+                                total_balance += bal_val
+                                sign = "🟢" if bal_val >= 0 else "🔴"
+                                balance_lines.append(f"{sign} <b>{client_num}</b> {client_name}: <code>${bal_val:,.2f}</code>")
+                            except ValueError:
+                                balance_lines.append(f"⚪ <b>{client_num}</b> {client_name}: {bal_str}")
+                        else:
+                            balance_lines.append(f"⚪ <b>{client_num}</b> {client_name}: —")
+                balance_lines.append("")
+                balance_lines.append(f"<b>Итого: <code>${total_balance:,.2f}</code></b>")
+                tg.send("\n".join(balance_lines))
+            except Exception as e:
+                logger.warning(f"Telegram balances message failed: {e}")
+
     except Exception as e:
         logger.warning(f"Dashboard update failed: {e}")
 
