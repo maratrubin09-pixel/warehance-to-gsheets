@@ -1,0 +1,15 @@
+name: Telegram Get Chat ID
+
+on:
+  workflow_dispatch:
+
+jobs:
+  getid:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get updates
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          echo "=== Recent Updates ==="
+          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?limit=10" | python3 -m json.tool
