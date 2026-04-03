@@ -48,6 +48,16 @@ ALLREPORTS_HEADERS = [
 
 PAYMENTS_HEADERS = ["Date", "Deposit", "Paid", "Balance", "Comments", "Customer info"]
 
+# Warehance IDs of deleted/inactive clients — skip during discovery
+IGNORED_WAREHANCE_IDS = {
+    "231185181607",  # 150 (deleted)
+    "231185181613",  # 224 (deleted)
+    "231185181629",  # 105 MiniBoso (deleted)
+    "231185181636",  # 280 Anatolii Ufimtsev (deleted)
+    "231185181700",  # 166 U-TECH LLC (deleted)
+    "231185181785",  # 259 AMTM COSMETICS LLC (deleted)
+}
+
 
 def fetch_warehance_clients(wh: WarehanceClient) -> list[dict]:
     """Fetch all clients from Warehance API with pagination."""
@@ -335,8 +345,12 @@ def discover_and_provision(
         logger.info("No clients found in Warehance or API error")
         return []
 
-    # Find new clients
-    new_wh_clients = [c for c in wh_clients if c["id"] not in existing_wh_ids]
+    # Find new clients (excluding ignored/deleted ones)
+    new_wh_clients = [
+        c for c in wh_clients
+        if c["id"] not in existing_wh_ids
+        and str(c["id"]) not in IGNORED_WAREHANCE_IDS
+    ]
     if not new_wh_clients:
         logger.info("No new clients found in Warehance")
         return []
