@@ -7,9 +7,12 @@ jobs:
   getid:
     runs-on: ubuntu-latest
     steps:
-      - name: Get updates
+      - name: Send test message
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          echo "=== Recent Updates ==="
-          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?limit=10" | python3 -m json.tool
+          RESULT=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\": \"${TELEGRAM_CHAT_ID}\", \"text\": \"✅ Telegram notifications restored! Bot is working.\"}")
+          echo "$RESULT" | python3 -m json.tool
