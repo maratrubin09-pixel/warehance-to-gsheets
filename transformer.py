@@ -102,7 +102,7 @@ def _format_date_full(iso_date: str) -> str:
     try:
         dt = datetime.fromisoformat(iso_date.replace("Z", "+00:00"))
         dt = dt.astimezone(_PACIFIC)
-        return dt.strftime("%m.%d.%Y")
+        return dt.strftime("%m/%d/%Y")
     except (ValueError, TypeError):
         return iso_date[:10]
 
@@ -113,7 +113,7 @@ def _format_date_payments(iso_date: str) -> str:
     try:
         dt = datetime.fromisoformat(iso_date.replace("Z", "+00:00"))
         dt = dt.astimezone(_PACIFIC)
-        return dt.strftime("%m/%d/%y")
+        return dt.strftime("%m/%d/%Y")
     except (ValueError, TypeError):
         return iso_date[:10]
 
