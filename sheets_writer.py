@@ -459,4 +459,6 @@ class GoogleSheetsWriter:
         return True
 
     def _set_total_formula(self, ws, total_row):
-        ws.update_cell(total_row, 4, f"=SUM(D3:D{total_row - 1})")
+        # INDIRECT keeps "D3" fixed when rows are inserted above.
+        # ROW()-1 dynamically finds the row before Total.
+        ws.update_cell(total_row, 4, '=SUM(INDIRECT("D3:D"&ROW()-1))')
