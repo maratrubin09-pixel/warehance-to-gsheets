@@ -459,4 +459,4 @@ class GoogleSheetsWriter:
         return True
 
     def _set_total_formula(self, ws, total_row):
-        ws.update_cell(total_row, 4, "=SUM(D3:D999)")
+        ws.update_cell(total_row, 4, f"=SUM(D3:D{total_row - 1})")
