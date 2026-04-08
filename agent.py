@@ -489,6 +489,27 @@ def sync_client(
         }
     )
 
+    # 3b. Build per-service payments breakdown for client 257 (SOLMAR)
+    if client_number == "257":
+        cat_totals = result.get("category_totals", {})
+        pay_date = payments["date"]
+        prows = []
+        storage = cat_totals.get("storage", 0)
+        orders_total = cat_totals.get("orders_total", 0)
+        returns = cat_totals.get("return_processing", 0)
+        ret_labels = cat_totals.get("return_labels", 0)
+        if storage > 0:
+            prows.append({"date": pay_date, "paid": round(storage, 2), "comment": "Storage"})
+        if orders_total > 0:
+            prows.append({"date": "" if prows else pay_date, "paid": round(orders_total, 2), "comment": "Shopify"})
+        if returns > 0:
+            prows.append({"date": "" if prows else pay_date, "paid": round(returns, 2), "comment": "Returns"})
+        if ret_labels > 0:
+            prows.append({"date": "" if prows else pay_date, "paid": round(ret_labels, 2), "comment": "Return Labels Charges"})
+        if not prows:
+            prows.append({"date": pay_date, "paid": 0, "comment": "Storage"})
+        result["payments_rows"] = prows
+
     # 4. Send anomaly alerts to Telegram
     if anomalies:
         tg.notify_anomalies(

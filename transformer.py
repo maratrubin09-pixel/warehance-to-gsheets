@@ -247,6 +247,12 @@ def transform_bill_details(rows: list[dict], client_name: str = "", client_numbe
         f"Total: ${grand_total:.2f} | Anomalies: {len(anomalies)}"
     )
 
+    # Per-category totals for services breakdown (used by 257 SOLMAR)
+    orders_total = sum(
+        entry["shipping_cost"] + entry["pick_fee"] + entry["package_cost"]
+        for entry in orders.values()
+    )
+
     return {
         "report_rows": report_rows,
         "headers": ALLREPORTS_HEADERS,
@@ -257,4 +263,10 @@ def transform_bill_details(rows: list[dict], client_name: str = "", client_numbe
         "grand_total": grand_total,
         "anomalies": anomalies,
         "report_date": _format_date_full(first_date),
+        "category_totals": {
+            "storage": storage_total,
+            "return_processing": return_processing_total,
+            "return_labels": return_labels_total,
+            "orders_total": orders_total,
+        },
     }

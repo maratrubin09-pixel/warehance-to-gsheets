@@ -382,7 +382,7 @@ class GoogleSheetsWriter:
     # Payments tab
     # ------------------------------------------------------------------
 
-    def write_payment(self, spreadsheet_id, tab_name, date, paid_amount):
+    def write_payment(self, spreadsheet_id, tab_name, date, paid_amount, comment=""):
         """Insert daily row into Payments. Always writes, even if $0."""
         ss = self._open(spreadsheet_id)
         ws = self._get_ws(ss, tab_name)
@@ -418,7 +418,7 @@ class GoogleSheetsWriter:
             charges_formula = f'=SUMIFS(AllReports!I$5:I$50000,AllReports!A$5:A$50000,A{new_row_idx},AllReports!B$5:B$50000,"Total")'
             balance_formula = f"=B{new_row_idx}-C{new_row_idx}"
 
-            ws.insert_row([date, "", charges_formula, balance_formula],
+            ws.insert_row([date, "", charges_formula, balance_formula, comment],
                           index=new_row_idx, value_input_option="USER_ENTERED")
             new_total_idx = total_row_idx + 1
 
@@ -454,7 +454,7 @@ class GoogleSheetsWriter:
             self._set_total_formula(ws, new_total_idx)
             logger.info(f"Inserted Payments {date}: ${paid_amount}")
         else:
-            ws.append_row([date, "", paid_amount, ""], value_input_option="USER_ENTERED")
+            ws.append_row([date, "", paid_amount, "", comment], value_input_option="USER_ENTERED")
             logger.info(f"Appended Payments {date}: ${paid_amount}")
         return True
 
