@@ -43,13 +43,17 @@ def _safe_float(val) -> float:
 
 
 def _round2(val: float) -> float:
-    """Round to 2 decimal places using ROUND_HALF_UP (standard rounding).
-    Python's built-in round() uses banker's rounding (ROUND_HALF_EVEN),
-    which rounds 22.125 → 22.12. We need 22.125 → 22.13 to match
-    manual invoices and standard accounting practice.
+    """Round to 2 decimal places matching Google Sheets ROUND() behavior.
+
+    Google Sheets uses IEEE 754 float + round-half-up. Because some
+    values like 22.275 are stored as 22.27499… in IEEE 754, they round
+    DOWN (to 22.27), while exact .5 values like 22.125 round UP (to
+    22.13). We replicate this by converting through float first, then
+    applying ROUND_HALF_UP on the true IEEE 754 representation.
     """
     from decimal import Decimal, ROUND_HALF_UP
-    return float(Decimal(str(val)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    f = float(val)
+    return float(Decimal(f"{f:.30f}").quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def _get_category(row: dict) -> str:
