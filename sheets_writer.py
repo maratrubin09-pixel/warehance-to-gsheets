@@ -502,18 +502,28 @@ class GoogleSheetsWriter:
                 break
 
         # Build rows to insert (hardcoded values, not SUMIFS — avoids date format mismatch)
+        # Use placeholder for Balance — will fix formulas after all rows inserted
         new_rows = []
         for idx, rd in enumerate(rows_data):
-            row_num = insert_at + idx
             date_cell = pay_date if idx == 0 else ""
             charges = rd["paid"]
             comment = rd.get("comment", "")
-            balance_formula = f"=B{row_num}-C{row_num}"
-            new_rows.append([date_cell, "", str(charges) if charges else "0", balance_formula, comment])
+            new_rows.append([date_cell, "", str(charges) if charges else "0", "", comment])
 
         # Insert rows (from bottom up to preserve indices)
         for row_data in reversed(new_rows):
             ws.insert_row(row_data, index=insert_at, value_input_option="USER_ENTERED")
+
+        # Now fix Balance formulas — rows are at insert_at to insert_at+len-1
+        balance_updates = []
+        for idx in range(len(new_rows)):
+            actual_row = insert_at + idx  # 1-indexed
+            balance_updates.append({
+                "range": f"D{actual_row}",
+                "values": [[f"=B{actual_row}-C{actual_row}"]]
+            })
+        if balance_updates:
+            ws.batch_update(balance_updates, value_input_option="USER_ENTERED")
 
         new_total_idx = total_row_idx + len(new_rows)
 
