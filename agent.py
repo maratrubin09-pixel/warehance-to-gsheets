@@ -210,29 +210,31 @@ def _merge_pick_fees(result: dict, prev_pick: dict[str, float]):
     for row in result["report_rows"]:
         onum = row.get("Order Number", "")
         if onum in prev_pick:
-            fee = round(prev_pick[onum], 2)
+            from transformer import _round2
+            fee = _round2(prev_pick[onum])
             row["Pick&Pack fee"] = fee
             # Recalculate total for this order row
             pick = fee
             pkg = row["Package cost"] if isinstance(row["Package cost"], (int, float)) else 0
             ship = row["Shipping cost"] if isinstance(row["Shipping cost"], (int, float)) else 0
-            row["Total"] = round(pick + pkg + ship, 2)
+            row["Total"] = _round2(pick + pkg + ship)
 
     # Recalculate grand total
+    from transformer import _round2
     grand_total = sum(
         r["Total"] for r in result["report_rows"]
         if isinstance(r["Total"], (int, float)) and r.get("Order Number") != "Total"
     )
-    result["grand_total"] = round(grand_total, 2)
+    result["grand_total"] = _round2(grand_total)
 
     # Update Total row
     for row in result["report_rows"]:
         if row.get("Order Number") == "Total":
-            row["Total"] = round(grand_total, 2)
+            row["Total"] = _round2(grand_total)
             break
 
     # Update payments
-    result["payments_row"]["paid"] = round(grand_total, 2)
+    result["payments_row"]["paid"] = _round2(grand_total)
 
     # Remove resolved anomalies
     resolved = set(prev_pick.keys())

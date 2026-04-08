@@ -42,6 +42,16 @@ def _safe_float(val) -> float:
     return float(val.replace(",", "."))
 
 
+def _round2(val: float) -> float:
+    """Round to 2 decimal places using ROUND_HALF_UP (standard rounding).
+    Python's built-in round() uses banker's rounding (ROUND_HALF_EVEN),
+    which rounds 22.125 → 22.12. We need 22.125 → 22.13 to match
+    manual invoices and standard accounting practice.
+    """
+    from decimal import Decimal, ROUND_HALF_UP
+    return float(Decimal(str(val)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
 def _get_category(row: dict) -> str:
     """Extract charge category from either CSV format."""
     cat = row.get("Charge Category", "") or row.get("Charge Type Category", "")
@@ -189,32 +199,32 @@ def transform_bill_details(rows: list[dict], client_name: str = "", client_numbe
             "Tracking number": entry["tracking"],
             "": "",
             "Storage/Returns": "",
-            "Shipping cost": round(entry["shipping_cost"], 2) if entry["shipping_cost"] else "",
-            "Pick&Pack fee": round(entry["pick_fee"], 2) if entry["pick_fee"] else "",
-            "Package cost": round(entry["package_cost"], 2) if entry["package_cost"] else "",
-            "Total": round(total, 2),
+            "Shipping cost": _round2(entry["shipping_cost"]) if entry["shipping_cost"] else "",
+            "Pick&Pack fee": _round2(entry["pick_fee"]) if entry["pick_fee"] else "",
+            "Package cost": _round2(entry["package_cost"]) if entry["package_cost"] else "",
+            "Total": _round2(total),
         })
 
     report_rows.append({
         "Date": "", "Order Number": "Storage", "Tracking number": "",
         "": "",
-        "Storage/Returns": round(storage_total, 2),
+        "Storage/Returns": _round2(storage_total),
         "Shipping cost": "", "Pick&Pack fee": "", "Package cost": "",
-        "Total": round(storage_total, 2),
+        "Total": _round2(storage_total),
     })
     report_rows.append({
         "Date": "", "Order Number": "Return Processing Charges", "Tracking number": "",
         "": "",
-        "Storage/Returns": round(return_processing_total, 2),
+        "Storage/Returns": _round2(return_processing_total),
         "Shipping cost": "", "Pick&Pack fee": "", "Package cost": "",
-        "Total": round(return_processing_total, 2),
+        "Total": _round2(return_processing_total),
     })
     report_rows.append({
         "Date": "", "Order Number": "Return Labels Charges", "Tracking number": "",
         "": "",
-        "Storage/Returns": round(return_labels_total, 2),
+        "Storage/Returns": _round2(return_labels_total),
         "Shipping cost": "", "Pick&Pack fee": "", "Package cost": "",
-        "Total": round(return_labels_total, 2),
+        "Total": _round2(return_labels_total),
     })
 
     grand_total = sum(
@@ -225,7 +235,7 @@ def transform_bill_details(rows: list[dict], client_name: str = "", client_numbe
         "Tracking number": "", "": "",
         "Storage/Returns": "",
         "Shipping cost": "", "Pick&Pack fee": "", "Package cost": "",
-        "Total": round(grand_total, 2),
+        "Total": _round2(grand_total),
     })
 
     logger.info(
@@ -238,7 +248,7 @@ def transform_bill_details(rows: list[dict], client_name: str = "", client_numbe
         "headers": ALLREPORTS_HEADERS,
         "payments_row": {
             "date": _format_date_payments(first_date),
-            "paid": round(grand_total, 2),
+            "paid": _round2(grand_total),
         },
         "grand_total": grand_total,
         "anomalies": anomalies,
