@@ -42,7 +42,7 @@ SCOPES = [
 # AllReports headers (9-col Sarmali format)
 ALLREPORTS_HEADERS = [
     "Date", "Order Number", "", "Tracking number",
-    "Storage/Returns", "Shipping cost", "FBM fee",
+    "Storage/Returns", "Shipping cost", "Pick&Pack fee",
     "Package cost", "Total",
 ]
 

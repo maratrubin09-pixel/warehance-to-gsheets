@@ -194,7 +194,7 @@ class GoogleSheetsWriter:
 
         # Column headers row 4
         headers = ["Date", "Order #", "Tracking", "",
-                   "Storage/Ret.", "Shipping", "FBM Fee", "Pkg Cost", "Total"]
+                   "Storage/Ret.", "Shipping", "Pick&Pack Fee", "Pkg Cost", "Total"]
         ws.update("A4:I4", [headers], value_input_option="RAW")
 
         logger.info(f"AllReports tab cleared and re-initialized for {client_number} {client_name}")
@@ -285,6 +285,9 @@ class GoogleSheetsWriter:
             rh[1] = report_label
             rows.append(rh)
             row_types.append("report_header")
+        # Track first data row of this block for Total formula
+        first_data_row_1idx = None  # 1-indexed row number
+
         for rec in records:
             row = [rec.get(h, "") for h in headers]
             order = rec.get("Order Number", "")
@@ -296,6 +299,42 @@ class GoogleSheetsWriter:
                 row_types.append("data")
             rows.append(row)
         ws.append_rows(rows, value_input_option="USER_ENTERED")
+
+        # --- Replace hardcoded values with formulas ---
+        # Column I (9) = Total, E=Storage, F=Shipping, G=Pick&Pack, H=PkgCost
+        formula_updates = []
+        for i, row_type in enumerate(row_types):
+            sheet_row = start_row + i + 1  # 1-indexed
+
+            if row_type == "report_header":
+                first_data_row_1idx = sheet_row + 1  # next row is first data
+            elif row_type == "data":
+                if first_data_row_1idx is None:
+                    first_data_row_1idx = sheet_row
+                # Total = SUM(E,F,G,H) for this row
+                formula_updates.append({
+                    "range": f"I{sheet_row}",
+                    "values": [[f"=SUM(E{sheet_row},F{sheet_row},G{sheet_row},H{sheet_row})"]]
+                })
+            elif row_type == "summary":
+                if first_data_row_1idx is None:
+                    first_data_row_1idx = sheet_row
+                # Total = E (Storage/Returns value)
+                formula_updates.append({
+                    "range": f"I{sheet_row}",
+                    "values": [[f"=E{sheet_row}"]]
+                })
+            elif row_type == "total":
+                # Total = SUM of all rows in this day's block
+                last_data_row = sheet_row - 1
+                if first_data_row_1idx and last_data_row >= first_data_row_1idx:
+                    formula_updates.append({
+                        "range": f"I{sheet_row}",
+                        "values": [[f"=SUM(I{first_data_row_1idx}:I{last_data_row})"]]
+                    })
+
+        if formula_updates:
+            ws.batch_update(formula_updates, value_input_option="USER_ENTERED")
         num_cols = len(headers)
         fmt_requests = []
         for i, row_type in enumerate(row_types):
@@ -353,22 +392,24 @@ class GoogleSheetsWriter:
 
         total_row_idx = None
         for i, row in enumerate(all_values):
-            if len(row) > 1 and row[1].strip().lower() == "total":
+            if len(row) > 0 and row[0].strip().lower() == "total":
                 total_row_idx = i + 1
             if len(row) > 0 and row[0].strip() == date:
-                # Date exists — update Paid in column C
-                ws.update_cell(i + 1, 3, paid_amount)
-                # Fix balance formula for this row (daily: deposit - paid)
-                ws.update_cell(i + 1, 4, f"=B{i+1}-C{i+1}")
-                logger.info(f"Updated Payments {date}: ${paid_amount}")
+                # Date exists — update formulas for this row
+                r = i + 1
+                charges_formula = f'=SUMIFS(AllReports!I$5:I$50000,AllReports!A$5:A$50000,A{r},AllReports!B$5:B$50000,"Total")'
+                balance_formula = f"=B{r}-C{r}"
+                ws.update(f"C{r}:D{r}", [[charges_formula, balance_formula]],
+                          value_input_option="USER_ENTERED")
+                logger.info(f"Updated Payments {date}: formulas at row {r}")
                 return True
 
         if total_row_idx:
             new_row_idx = total_row_idx  # insert before Total
-            # Balance formula: deposit - paid (daily, not running)
+            charges_formula = f'=SUMIFS(AllReports!I$5:I$50000,AllReports!A$5:A$50000,A{new_row_idx},AllReports!B$5:B$50000,"Total")'
             balance_formula = f"=B{new_row_idx}-C{new_row_idx}"
 
-            ws.insert_row([date, "", paid_amount, balance_formula],
+            ws.insert_row([date, "", charges_formula, balance_formula],
                           index=new_row_idx, value_input_option="USER_ENTERED")
             new_total_idx = total_row_idx + 1
 
@@ -410,4 +451,4 @@ class GoogleSheetsWriter:
 
     def _set_total_formula(self, ws, total_row):
         data_end = total_row - 1
-        ws.update_cell(total_row, 4, f"=SUM(D2:D{data_end})")
+        ws.update_cell(total_row, 4, f"=SUM(D3:D{data_end})")

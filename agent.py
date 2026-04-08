@@ -211,7 +211,7 @@ def _merge_pick_fees(result: dict, prev_pick: dict[str, float]):
         onum = row.get("Order Number", "")
         if onum in prev_pick:
             fee = round(prev_pick[onum], 2)
-            row["FBM fee"] = fee
+            row["Pick&Pack fee"] = fee
             # Recalculate total for this order row
             pick = fee
             pkg = row["Package cost"] if isinstance(row["Package cost"], (int, float)) else 0
@@ -337,16 +337,16 @@ def sync_client(
         report_rows = [
             {"Date": "", "Order Number": "Storage", "_spacer": "",
              "Tracking number": "", "Storage/Returns": 0, "Shipping cost": "",
-             "FBM fee": "", "Package cost": "", "Total": 0},
+             "Pick&Pack fee": "", "Package cost": "", "Total": 0},
             {"Date": "", "Order Number": "Return Processing Charges", "_spacer": "",
              "Tracking number": "", "Storage/Returns": 0, "Shipping cost": "",
-             "FBM fee": "", "Package cost": "", "Total": 0},
+             "Pick&Pack fee": "", "Package cost": "", "Total": 0},
             {"Date": "", "Order Number": "Return Labels Charges", "_spacer": "",
              "Tracking number": "", "Storage/Returns": 0, "Shipping cost": "",
-             "FBM fee": "", "Package cost": "", "Total": 0},
+             "Pick&Pack fee": "", "Package cost": "", "Total": 0},
             {"Date": zero_date_full, "Order Number": "Total", "_spacer": "",
              "Tracking number": "", "Storage/Returns": "", "Shipping cost": "",
-             "FBM fee": "", "Package cost": "", "Total": 0},
+             "Pick&Pack fee": "", "Package cost": "", "Total": 0},
         ]
         from transformer import ALLREPORTS_HEADERS
         result = {
