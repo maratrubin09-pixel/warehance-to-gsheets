@@ -501,18 +501,15 @@ class GoogleSheetsWriter:
                 insert_at = i + 2
                 break
 
-        # Build rows to insert
+        # Build rows to insert (hardcoded values, not SUMIFS — avoids date format mismatch)
         new_rows = []
         for idx, rd in enumerate(rows_data):
             row_num = insert_at + idx
             date_cell = pay_date if idx == 0 else ""
             charges = rd["paid"]
             comment = rd.get("comment", "")
-            charges_formula = f'=SUMIFS(AllReports!I$5:I$50000,AllReports!A$5:A$50000,"{pay_date}",AllReports!B$5:B$50000,"Total")' if comment == "Storage" else ""
-            if not charges_formula:
-                charges_formula = str(charges) if charges else "0"
             balance_formula = f"=B{row_num}-C{row_num}"
-            new_rows.append([date_cell, "", charges_formula, balance_formula, comment])
+            new_rows.append([date_cell, "", str(charges) if charges else "0", balance_formula, comment])
 
         # Insert rows (from bottom up to preserve indices)
         for row_data in reversed(new_rows):
