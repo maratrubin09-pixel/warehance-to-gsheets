@@ -405,7 +405,16 @@ class GoogleSheetsWriter:
                 return True
 
         if total_row_idx:
-            new_row_idx = total_row_idx  # insert before Total
+            # Insert before the blank gap (not right before Total)
+            # Find last data row (non-empty, non-Total) before Total
+            insert_at = total_row_idx  # fallback: before Total
+            for i in range(total_row_idx - 2, 1, -1):  # scan backwards (0-indexed)
+                row_val = all_values[i] if i < len(all_values) else []
+                cell_a = row_val[0].strip() if row_val else ""
+                if cell_a and cell_a.lower() != "total":
+                    insert_at = i + 2  # insert right after last data row (1-indexed)
+                    break
+            new_row_idx = insert_at
             charges_formula = f'=SUMIFS(AllReports!I$5:I$50000,AllReports!A$5:A$50000,A{new_row_idx},AllReports!B$5:B$50000,"Total")'
             balance_formula = f"=B{new_row_idx}-C{new_row_idx}"
 
@@ -450,5 +459,4 @@ class GoogleSheetsWriter:
         return True
 
     def _set_total_formula(self, ws, total_row):
-        data_end = total_row - 1
-        ws.update_cell(total_row, 4, f"=SUM(D3:D{data_end})")
+        ws.update_cell(total_row, 4, "=SUM(D3:D999)")
