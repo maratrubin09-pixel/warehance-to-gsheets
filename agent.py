@@ -561,15 +561,12 @@ def sync_client(
     payments_rows_list = result.get("payments_rows", [])
 
     if payments_rows_list and client_number == "257":
-        # Client 257 (SOLMAR): write multiple payment rows with comments
-        for pr in payments_rows_list:
-            gs.write_payment(
-                spreadsheet_id=spreadsheet_id,
-                tab_name=payments_tab,
-                date=pr["date"],
-                paid_amount=pr["paid"],
-                comment=pr.get("comment", ""),
-            )
+        # Client 257 (SOLMAR): write all service rows at once
+        gs.write_payment_multi(
+            spreadsheet_id=spreadsheet_id,
+            tab_name=payments_tab,
+            rows_data=payments_rows_list,
+        )
         logger.info(
             f"Payments: wrote {len(payments_rows_list)} lines for {client_name} "
             f"(breakdown: {', '.join(p.get('comment','') for p in payments_rows_list)})"

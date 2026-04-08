@@ -458,6 +458,101 @@ class GoogleSheetsWriter:
             logger.info(f"Appended Payments {date}: ${paid_amount}")
         return True
 
+    def write_payment_multi(self, spreadsheet_id, tab_name, rows_data):
+        """Insert multiple payment rows for one day (used by 257 SOLMAR).
+
+        rows_data: list of dicts with keys: date, paid, comment
+        First row has the date, subsequent rows have empty date.
+        All rows for the same day are inserted together.
+        """
+        if not rows_data:
+            return
+        ss = self._open(spreadsheet_id)
+        ws = self._get_ws(ss, tab_name)
+        sheet_id = self._get_sheet_id(ws)
+        all_values = ws.get_all_values()
+        num_cols = max(len(r) for r in all_values) if all_values else 6
+
+        pay_date = rows_data[0]["date"]
+
+        # Check if date already exists
+        for i, row in enumerate(all_values):
+            if len(row) > 0 and row[0].strip() == pay_date:
+                logger.info(f"Payments {pay_date} already exists for SOLMAR, skipping")
+                return
+
+        # Find insert position (before blank gap / Total)
+        total_row_idx = None
+        for i, row in enumerate(all_values):
+            if len(row) > 0 and row[0].strip().lower() == "total":
+                total_row_idx = i + 1
+                break
+
+        if not total_row_idx:
+            logger.warning("No Total row found in Payments")
+            return
+
+        # Find last data row before Total
+        insert_at = total_row_idx
+        for i in range(total_row_idx - 2, 1, -1):
+            row_val = all_values[i] if i < len(all_values) else []
+            cell_a = row_val[0].strip() if row_val else ""
+            if cell_a and cell_a.lower() != "total":
+                insert_at = i + 2
+                break
+
+        # Build rows to insert
+        new_rows = []
+        for idx, rd in enumerate(rows_data):
+            row_num = insert_at + idx
+            date_cell = pay_date if idx == 0 else ""
+            charges = rd["paid"]
+            comment = rd.get("comment", "")
+            charges_formula = f'=SUMIFS(AllReports!I$5:I$50000,AllReports!A$5:A$50000,"{pay_date}",AllReports!B$5:B$50000,"Total")' if comment == "Storage" else ""
+            if not charges_formula:
+                charges_formula = str(charges) if charges else "0"
+            balance_formula = f"=B{row_num}-C{row_num}"
+            new_rows.append([date_cell, "", charges_formula, balance_formula, comment])
+
+        # Insert rows (from bottom up to preserve indices)
+        for row_data in reversed(new_rows):
+            ws.insert_row(row_data, index=insert_at, value_input_option="USER_ENTERED")
+
+        new_total_idx = total_row_idx + len(new_rows)
+
+        # Format new rows
+        YELLOW = {"red": 1.0, "green": 1.0, "blue": 0.0}
+        GREEN = {"red": 0.0, "green": 1.0, "blue": 0.0}
+        fmt_requests = []
+        for idx in range(len(new_rows)):
+            abs_row = insert_at - 1 + idx
+            fmt_requests.append(self._make_format_request(
+                sheet_id, abs_row, 0, num_cols,
+                bg_color=WHITE, bold=False, font_size=10,
+                fg_color=BLACK, h_align="LEFT"))
+            fmt_requests.append(self._make_row_height_request(sheet_id, abs_row, 32))
+            # Color comment cell
+            comment = new_rows[idx][4]
+            if comment == "Storage":
+                fmt_requests.append(self._make_format_request(
+                    sheet_id, abs_row, 4, 5, bg_color=YELLOW))
+            elif "Return" in comment:
+                fmt_requests.append(self._make_format_request(
+                    sheet_id, abs_row, 4, 5, bg_color=GREEN))
+
+        # Re-format Total row
+        fmt_requests.append(self._make_format_request(
+            sheet_id, new_total_idx - 1, 0, num_cols,
+            bg_color=PINK, bold=True, font_size=15,
+            fg_color=WHITE, h_align="CENTER"))
+        fmt_requests.append(self._make_row_height_request(sheet_id, new_total_idx - 1, 42))
+
+        if fmt_requests:
+            ss.batch_update({"requests": fmt_requests})
+
+        self._set_total_formula(ws, new_total_idx)
+        logger.info(f"Inserted {len(new_rows)} Payments rows for {pay_date} (SOLMAR)")
+
     def _set_total_formula(self, ws, total_row):
         # INDIRECT keeps "D3" fixed when rows are inserted above.
         # ROW()-1 dynamically finds the row before Total.
