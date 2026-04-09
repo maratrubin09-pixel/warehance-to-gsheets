@@ -390,11 +390,20 @@ class GoogleSheetsWriter:
         all_values = ws.get_all_values()
         num_cols = max(len(r) for r in all_values) if all_values else 6
 
+        # Normalize date for comparison (handles MM/DD/YY vs MM/DD/YYYY)
+        from datetime import datetime as _dt
+        def _norm(d):
+            for fmt in ["%m/%d/%Y", "%m/%d/%y"]:
+                try: return _dt.strptime(d.strip(), fmt).strftime("%m/%d/%Y")
+                except ValueError: continue
+            return d.strip()
+        date_norm = _norm(date)
+
         total_row_idx = None
         for i, row in enumerate(all_values):
             if len(row) > 0 and row[0].strip().lower() == "total":
                 total_row_idx = i + 1
-            if len(row) > 0 and row[0].strip() == date:
+            if len(row) > 0 and _norm(row[0]) == date_norm:
                 # Date exists — update formulas for this row
                 r = i + 1
                 charges_formula = f'=SUMIFS(AllReports!I$5:I$50000,AllReports!A$5:A$50000,A{r},AllReports!B$5:B$50000,"Total")'
@@ -475,9 +484,19 @@ class GoogleSheetsWriter:
 
         pay_date = rows_data[0]["date"]
 
-        # Check if date already exists
+        # Check if date already exists (normalize: compare both as MM/DD/YYYY)
+        from datetime import datetime
+        def _normalize_date(d):
+            for fmt in ["%m/%d/%Y", "%m/%d/%y"]:
+                try:
+                    return datetime.strptime(d.strip(), fmt).strftime("%m/%d/%Y")
+                except ValueError:
+                    continue
+            return d.strip()
+
+        pay_date_norm = _normalize_date(pay_date)
         for i, row in enumerate(all_values):
-            if len(row) > 0 and row[0].strip() == pay_date:
+            if len(row) > 0 and _normalize_date(row[0]) == pay_date_norm:
                 logger.info(f"Payments {pay_date} already exists for SOLMAR, skipping")
                 return
 
